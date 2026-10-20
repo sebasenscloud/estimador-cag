@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    env:
+      ANTHROPIC_API_KEY: fake-key-for-ci
+      LLM_PROVIDER: anthropic
+      LLM_MODEL: claude-opus-5-5
+      APP_ENV: test
+      LOG_LEVEL: info
+      MAX_TOKENS: "16000"
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v5
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Instalar dependencias
+        run: uv sync --locked
+
+      - name: Linter
+        run: uv run ruff check .
+
+      - name: Formato
+        run: uv run ruff format --check .
+
+      - name: Tests
+        run: uv run pytest -v

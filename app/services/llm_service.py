@@ -32,11 +32,12 @@ def build_system_prompt() -> str:
             {examples_text}
             </ejemplos>"""
 
+
 ### Armo el prompt para luego generar la estimación
 def generate_estimation(transcript: str) -> dict:
     response = client.messages.create(
         model=settings.llm_model,
-        max_tokens= settings.max_tokens,
+        max_tokens=settings.max_tokens,
         system=build_system_prompt(),
         messages=[
             {"role": "user", "content": transcript},
@@ -44,11 +45,15 @@ def generate_estimation(transcript: str) -> dict:
     )
 
     if response.stop_reason == "refusal":
-        raise ValueError("El modelo no pudo generar la estimación sobre la transcripción enviada.")
+        raise ValueError(
+            "El modelo no pudo generar la estimación sobre la transcripción enviada."
+        )
 
-    estimation = "".join(block.text for block in response.content if block.type == "text")
+    estimation = "".join(
+        block.text for block in response.content if block.type == "text"
+    )
 
-    return{
+    return {
         "estimation": estimation,
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,

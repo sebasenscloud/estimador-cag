@@ -14,10 +14,10 @@ ESTIMATION_EXAMPLES = [
         **Total estimado: 175 horas**
         **Equipo recomendado: 2 desarrolladores full-stack + 1 diseñador UX (part-time)**
         **Duración estimada: 6-8 semanas**
-        """
+        """,
     },
     # ... segundo ejemplo
-       {
+    {
         "meeting_summary": "El cliente necesita una plataforma web de gestión de Asistencia laboral...",
         "estimation": """
         ## Estimación: Plataforma de Gestión de Asistencia Laboral
@@ -33,6 +33,6 @@ ESTIMATION_EXAMPLES = [
         **Total estimado: 250 horas**
         **Equipo recomendado: 2 desarrolladores full-stack + 1 diseñador UX (part-time)**
         **Duración estimada: 10-12 semanas**
-        """
+        """,
     },
 ]
