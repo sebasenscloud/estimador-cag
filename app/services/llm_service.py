@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+
 from anthropic import Anthropic
 
 from app.config import settings
@@ -58,3 +60,21 @@ def generate_estimation(transcript: str) -> dict:
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
     }
+
+
+def stream_estimation(transcript: str) -> Iterator[str]:
+    with client.messages.stream(
+        model=settings.llm_model,
+        max_tokens=settings.max_tokens,
+        system=build_system_prompt(),
+        messages=[
+            {"role": "user", "content": transcript},
+        ],
+    ) as stream:
+        yield from stream.text_stream
+        final_message = stream.get_final_message()
+
+    if final_message.stop_reason == "refusal":
+        raise ValueError(
+            "El modelo no pudo generar la estimación sobre la transcripción enviada."
+        )

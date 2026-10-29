@@ -1,7 +1,7 @@
 import anthropic
 import streamlit as st
 
-from app.services.llm_service import generate_estimation
+from app.services.llm_service import stream_estimation
 
 st.set_page_config(page_title="Estimador CAG", page_icon="🧮")
 st.title("Estimador de proyectos de software")
@@ -26,16 +26,15 @@ if transcription:
 
     with st.chat_message("assistant"):
         try:
-            with st.spinner("Generando estimación..."):
-                result = generate_estimation(transcription)
-            answer = result["estimation"]
+            answer = st.write_stream(stream_estimation(transcription))
         except ValueError as error:
             answer = f"⚠️ {error}"
+            st.markdown(answer)
         except anthropic.APIError:
             answer = (
                 "⚠️ No se pudo conectar con el proveedor de LLM. "
                 "Revisá tu API key y tu conexión."
             )
-        st.markdown(answer)
+            st.markdown(answer)
 
     st.session_state.messages.append({"role": "assistant", "content": answer})
