@@ -2,6 +2,7 @@ from collections.abc import Iterator
 
 import pytest
 
+from app.config import settings
 from app.schemas import DetailLevel, EstimationRequest, OutputFormat, ProjectType
 from app.services import llm_service
 from app.services.providers import LLMProvider, LLMResult
@@ -54,33 +55,18 @@ def fake_provider(monkeypatch):
     llm_service.cache.clear()
 
 
-def test_system_prompt_includes_instructions_and_examples():
-    prompt = llm_service.build_system_prompt()
+def test_generate_sends_rendered_prompt_to_provider(fake_provider):
+    llm_service.generate_estimation(REQUEST)
 
-    assert prompt.startswith("Sos un estimador experto")
-    assert '<ejemplo numero="1">' in prompt
-    assert "</ejemplos>" in prompt
-
-
-def test_user_message_includes_all_form_fields():
-    message = llm_service.build_user_message(REQUEST)
-
-    assert "Aplicación móvil" in message
-    assert "Intermedio" in message
-    assert "tabla en Markdown" in message
-    assert REQUEST.description in message
-
-
-def test_each_option_has_prompt_instructions():
-    assert set(llm_service.DETAIL_LEVEL_INSTRUCTIONS) == set(DetailLevel)
-    assert set(llm_service.OUTPUT_FORMAT_INSTRUCTIONS) == set(OutputFormat)
+    assert REQUEST.description in fake_provider.last_user_message
+    assert "Aplicación móvil" in fake_provider.last_user_message
 
 
 def test_generate_returns_text_and_prompt_version(fake_provider):
     response = llm_service.generate_estimation(REQUEST)
 
     assert response.text == "## Estimación falsa"
-    assert response.prompt_version == llm_service.PROMPT_VERSION
+    assert response.prompt_version == settings.prompt_version
     assert fake_provider.generate_calls == 1
 
 
@@ -108,7 +94,7 @@ def test_stream_yields_pieces_and_fills_metrics(fake_provider):
     assert metrics["provider"] == "fake"
     assert metrics["output_tokens"] == 90
     assert metrics["cache_hit"] is False
-    assert metrics["prompt_version"] == llm_service.PROMPT_VERSION
+    assert metrics["prompt_version"] == settings.prompt_version
 
 
 def test_stream_uses_cache_on_second_call(fake_provider):

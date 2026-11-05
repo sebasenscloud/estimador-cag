@@ -1,0 +1,59 @@
+<ejemplos>
+<ejemplo numero="1">
+<tipo_de_proyecto>Herramienta interna</tipo_de_proyecto>
+<descripcion>
+Una empresa de 300 empleados quiere un portal para pedir vacaciones. Login con Google Workspace, aprobación del manager directo, calendario del equipo y exportación mensual a Excel para Recursos Humanos.
+</descripcion>
+<estimacion>
+| Fase | Tareas | Horas |
+|---|---|---|
+| Descubrimiento | Relevamiento con RR. HH. y reglas de aprobación | 16 |
+| Diseño UX | Flujos de pedido, aprobación y calendario | 24 |
+| Backend | API de solicitudes, saldos de días y aprobaciones | 60 |
+| Frontend | Formulario, bandeja del manager y calendario | 48 |
+| Integraciones | SSO con Google Workspace y exportación a Excel | 16 |
+| Testing | Pruebas funcionales y de permisos | 24 |
+| Despliegue | Infraestructura, monitoreo y capacitación | 12 |
+| **Total** | | **200** |
+
+**Equipo recomendado:** 1 desarrollador full-stack, 1 desarrollador de apoyo part-time y 1 diseñador UX part-time.
+**Duración estimada:** 6 a 7 semanas.
+</estimacion>
+</ejemplo>
+
+<ejemplo numero="2">
+<tipo_de_proyecto>Pipeline de datos</tipo_de_proyecto>
+<descripcion>
+Una cadena de 40 sucursales deja cada noche un CSV de ventas en un servidor SFTP. Quieren cargarlo a BigQuery, validar la calidad de los datos y ver un tablero de ventas por sucursal en Looker Studio.
+</descripcion>
+<estimacion>
+- Relevamiento de fuentes y formatos de los CSV (12 h)
+- Ingesta desde SFTP y carga incremental a BigQuery (32 h)
+- Validaciones de calidad: duplicados, nulos y montos fuera de rango (24 h)
+- Modelado del data warehouse por sucursal, producto y fecha (28 h)
+- Orquestación diaria, reintentos y alertas por email (20 h)
+- Tablero en Looker Studio (24 h)
+- Documentación y traspaso al equipo de datos (8 h)
+
+**Total estimado:** 148 horas.
+**Equipo recomendado:** 1 data engineer y 1 analista de datos part-time.
+**Duración estimada:** 5 semanas.
+</estimacion>
+</ejemplo>
+
+<ejemplo numero="3">
+<tipo_de_proyecto>Aplicación móvil</tipo_de_proyecto>
+<descripcion>
+Una veterinaria quiere una app para iOS y Android donde los clientes saquen turnos, vean la historia clínica de sus mascotas y reciban recordatorios de vacunas. El personal necesita un panel web simple para cargar la agenda.
+</descripcion>
+<estimacion>
+El proyecto combina una app multiplataforma con un backend propio y un panel administrativo. El diseño de pantallas y la identidad visual llevan unas 40 horas. La app en Flutter, con turnos, perfil de mascotas e historia clínica, es el bloque más grande: 140 horas. El backend con la API, la base de datos y la autenticación suma 80 horas, y el panel web para el personal otras 40.
+
+Los recordatorios de vacunas con notificaciones push agregan 20 horas. Por tratarse de una app móvil, conviene reservar 40 horas de pruebas en dispositivos reales y 12 horas para la publicación en App Store y Google Play, que suele demorar por las revisiones de las tiendas.
+
+**Total estimado:** 372 horas.
+**Equipo recomendado:** 2 desarrolladores mobile, 1 desarrollador backend y 1 diseñador UX part-time.
+**Duración estimada:** 10 a 12 semanas.
+</estimacion>
+</ejemplo>
+</ejemplos>

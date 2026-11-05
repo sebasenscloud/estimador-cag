@@ -2,7 +2,7 @@
 
 Estimador de proyectos de software basado en **CAG (Cache-Augmented Generation)**. A partir de la descripción de un proyecto, genera una estimación de esfuerzo en horas, con el nivel de detalle y el formato que elijas.
 
-El contexto (estimaciones de ejemplo) se inyecta directamente en el system prompt de cada llamada al LLM, sin base de datos ni búsqueda vectorial.
+El contexto (estimaciones de ejemplo en `app/prompts/estimation/v1/examples.j2`) se inyecta directamente en el system prompt de cada llamada al LLM, sin base de datos ni búsqueda vectorial.
 
 El proyecto tiene dos piezas:
 
@@ -19,7 +19,29 @@ Navegador → Streamlit (formulario) → POST /api/v1/estimate → FastAPI → L
 - **Wrapper de proveedores:** una interfaz común (`LLMProvider`) con implementaciones para **Anthropic** y **OpenAI**. El proveedor se elige con `LLM_PROVIDER`, sin tocar código.
 - **Caching exact-match:** si llega exactamente la misma solicitud (descripción y opciones), con el mismo proveedor, modelo y prompt, la respuesta sale de una caché en memoria (LRU) sin llamar al LLM.
 - **Observabilidad con structlog:** se registra cada llamada al LLM (proveedor, modelo, versión del prompt, opciones elegidas, tokens, duración, acierto de caché, errores) y cada request HTTP de la API.
-- **Prompt como f-string versionado:** `build_system_prompt()` y `build_user_message()` en `app/services/llm_service.py`. `PROMPT_VERSION` se devuelve en cada respuesta.
+- **Prompts versionados con Jinja2** (`app/prompts/`): el system y el user prompt viven en plantillas `.j2` separadas del código. La versión activa se elige con `PROMPT_VERSION` y se devuelve en cada respuesta.
+
+## Prompts
+
+```
+app/prompts/
+├── loader.py                 # render_estimation_prompt(request, version="v1") -> (system, user)
+└── estimation/
+    └── v1/
+        ├── system.j2         # Rol, instrucciones, bloques según detail_level y output_format
+        ├── user.j2           # Envuelve el tipo de proyecto y la descripción del usuario
+        └── examples.j2       # Ejemplos few-shot, incluidos desde system.j2
+```
+
+- `system.j2` arma el rol y las instrucciones generales, y con `{% if %}` incluye **solo** las instrucciones del nivel de detalle y del formato de salida elegidos. Inserta los ejemplos con `{% include "examples.j2" %}`.
+- El loader usa `Environment` de Jinja2 con `StrictUndefined` (si falta una variable, falla en lugar de dejar un hueco en el prompt), `trim_blocks` y `lstrip_blocks` (las etiquetas `{% %}` no dejan líneas en blanco ni sangrías).
+
+### Crear una versión nueva del prompt
+
+1. Copiá la carpeta `app/prompts/estimation/v1` como `v2` y editá las plantillas.
+2. Cambiá `PROMPT_VERSION=v2` en `.env` y reiniciá el servicio IA.
+
+No hace falta tocar código. La versión forma parte de la caché, así que las respuestas de `v1` no se reutilizan para `v2`, y cada respuesta indica en `prompt_version` qué versión la generó.
 
 ## Contrato del servicio
 
@@ -52,16 +74,17 @@ estimador-cag/
 │   ├── logging_config.py             # Configuración de structlog
 │   ├── routers/
 │   │   └── estimations.py            # Endpoint POST /api/v1/estimate
-│   ├── services/
-│   │   ├── llm_service.py            # Prompts, versión, caché y logs
-│   │   ├── cache.py                  # Caché exact-match (LRU en memoria)
-│   │   └── providers/
-│   │       ├── __init__.py           # Fábrica: elige el proveedor según LLM_PROVIDER
-│   │       ├── base.py               # Interfaz LLMProvider, LLMResult y errores
-│   │       ├── anthropic_provider.py # Implementación con el SDK de Anthropic
-│   │       └── openai_provider.py    # Implementación con el SDK de OpenAI
-│   └── context/
-│       └── examples.py               # Estimaciones de ejemplo (contexto CAG)
+│   ├── prompts/
+│   │   ├── loader.py                 # Renderiza los prompts Jinja2 por versión
+│   │   └── estimation/v1/            # Plantillas system.j2, user.j2 y examples.j2
+│   └── services/
+│       ├── llm_service.py            # Llamada al LLM, caché y logs
+│       ├── cache.py                  # Caché exact-match (LRU en memoria)
+│       └── providers/
+│           ├── __init__.py           # Fábrica: elige el proveedor según LLM_PROVIDER
+│           ├── base.py               # Interfaz LLMProvider, LLMResult y errores
+│           ├── anthropic_provider.py # Implementación con el SDK de Anthropic
+│           └── openai_provider.py    # Implementación con el SDK de OpenAI
 ├── streamlit_app.py                  # Cliente: formulario que llama al servicio IA
 ├── tests/                            # Tests de estructura, API, servicio, proveedores y cliente
 ├── .github/workflows/ci.yml          # Pipeline de CI
@@ -112,6 +135,7 @@ Las API keys se leen siempre desde `.env`. Nunca están escritas en el código, 
 | `LOG_LEVEL` | Nivel de logs | `info` |
 | `MAX_TOKENS` | Largo máximo de la respuesta | `16000` |
 | `CACHE_MAX_ENTRIES` | Respuestas que guarda la caché | `128` |
+| `PROMPT_VERSION` | Versión de las plantillas en `app/prompts/estimation/` | `v1` |
 | `ESTIMATOR_API_URL` | Dirección del servicio IA que usa el cliente | `http://127.0.0.1:8000` |
 | `ESTIMATOR_API_TIMEOUT` | Segundos que el cliente espera la respuesta | `300` |
 
@@ -173,7 +197,7 @@ Respuesta:
 ```json
 {
   "text": "## Estimación: ...",
-  "prompt_version": "v2"
+  "prompt_version": "v1"
 }
 ```
 
@@ -184,7 +208,7 @@ Cada estimación que no sale de la caché hace una llamada real al LLM y consume
 Los logs aparecen en la terminal del servicio IA. Ejemplo:
 
 ```
-2026-11-05T13:20:07Z [info] llm_request_completed  cache_hit=False detail_level=medium duration_ms=8123 input_tokens=1240 model=claude-opus-5-5 output_format=phases_table output_tokens=580 project_type=mobile_app prompt_version=v2 provider=anthropic streaming=False
+2026-11-05T13:20:07Z [info] llm_request_completed  cache_hit=False detail_level=medium duration_ms=8123 input_tokens=1240 model=claude-opus-5-5 output_format=phases_table output_tokens=580 project_type=mobile_app prompt_version=v1 provider=anthropic streaming=False
 ```
 
 Con `APP_ENV=production` se emiten en formato JSON, listos para un sistema de logs. El texto de las descripciones nunca se registra.
