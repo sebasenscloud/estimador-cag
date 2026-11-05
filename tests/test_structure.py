@@ -8,6 +8,7 @@ REQUIRED_FILES = [
     "app/__init__.py",
     "app/main.py",
     "app/config.py",
+    "app/schemas.py",
     "app/routers/__init__.py",
     "app/routers/estimations.py",
     "app/services/__init__.py",

@@ -1,32 +1,34 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.schemas import EstimationRequest, EstimationResponse
 from app.services.providers import LLMProviderError
 
 client = TestClient(app)
 
-VALID_TRANSCRIPTION = (
-    "En la reunión el cliente pidió una app de reservas de turnos "
-    "con login, calendario y notificaciones por email."
-)
+VALID_REQUEST = {
+    "description": (
+        "El cliente pidió una app de reservas de turnos "
+        "con login, calendario y notificaciones por email."
+    ),
+    "project_type": "mobile_app",
+    "detail_level": "medium",
+    "output_format": "phases_table",
+}
 
 
-def fake_generate_estimation(transcript: str) -> dict:
-    return {
-        "estimation": "## Estimación: App de turnos\n\n**Total estimado: 120 horas**",
-        "provider": "anthropic",
-        "model": "claude-opus-5-5",
-        "input_tokens": 1500,
-        "output_tokens": 300,
-        "cache_hit": False,
-    }
+def fake_generate_estimation(request: EstimationRequest) -> EstimationResponse:
+    return EstimationResponse(
+        text="## Estimación: App de turnos\n\n**Total estimado: 120 horas**",
+        prompt_version="v-test",
+    )
 
 
-def fake_generate_estimation_refusal(transcript: str) -> dict:
+def fake_generate_estimation_refusal(request: EstimationRequest):
     raise ValueError("El modelo no pudo generar la estimación.")
 
 
-def fake_generate_estimation_provider_error(transcript: str) -> dict:
+def fake_generate_estimation_provider_error(request: EstimationRequest):
     raise LLMProviderError("API key inválida")
 
 
@@ -42,29 +44,60 @@ def test_estimate_returns_estimation(monkeypatch):
         "app.routers.estimations.generate_estimation", fake_generate_estimation
     )
 
-    response = client.post(
-        "/api/v1/estimate", json={"transcription": VALID_TRANSCRIPTION}
-    )
+    response = client.post("/api/v1/estimate", json=VALID_REQUEST)
 
     assert response.status_code == 200
-    body = response.json()
-    assert body["estimation"].startswith("## Estimación")
-    assert body["model"] == "claude-opus-5-5"
-    assert body["provider"] == "anthropic"
-    assert body["input_tokens"] == 1500
-    assert body["output_tokens"] == 300
-    assert body["cache_hit"] is False
-    assert "datetime_created" in body
+    assert response.json() == {
+        "text": "## Estimación: App de turnos\n\n**Total estimado: 120 horas**",
+        "prompt_version": "v-test",
+    }
 
 
-def test_estimate_requires_transcription():
-    response = client.post("/api/v1/estimate", json={})
+def test_estimate_receives_typed_request(monkeypatch):
+    received = {}
+
+    def capture(request: EstimationRequest) -> EstimationResponse:
+        received["request"] = request
+        return fake_generate_estimation(request)
+
+    monkeypatch.setattr("app.routers.estimations.generate_estimation", capture)
+
+    client.post("/api/v1/estimate", json=VALID_REQUEST)
+
+    request = received["request"]
+    assert isinstance(request, EstimationRequest)
+    assert request.project_type.value == "mobile_app"
+    assert request.output_format.value == "phases_table"
+
+
+def test_estimate_requires_all_fields():
+    response = client.post(
+        "/api/v1/estimate", json={"description": VALID_REQUEST["description"]}
+    )
 
     assert response.status_code == 422
 
 
-def test_estimate_rejects_short_transcription():
-    response = client.post("/api/v1/estimate", json={"transcription": "muy corto"})
+def test_estimate_rejects_short_description():
+    response = client.post(
+        "/api/v1/estimate", json={**VALID_REQUEST, "description": "muy corto"}
+    )
+
+    assert response.status_code == 422
+
+
+def test_estimate_rejects_too_long_description():
+    response = client.post(
+        "/api/v1/estimate", json={**VALID_REQUEST, "description": "a" * 2001}
+    )
+
+    assert response.status_code == 422
+
+
+def test_estimate_rejects_unknown_enum_value():
+    response = client.post(
+        "/api/v1/estimate", json={**VALID_REQUEST, "project_type": "videojuego"}
+    )
 
     assert response.status_code == 422
 
@@ -75,9 +108,7 @@ def test_estimate_handles_model_refusal(monkeypatch):
         fake_generate_estimation_refusal,
     )
 
-    response = client.post(
-        "/api/v1/estimate", json={"transcription": VALID_TRANSCRIPTION}
-    )
+    response = client.post("/api/v1/estimate", json=VALID_REQUEST)
 
     assert response.status_code == 422
     assert "no pudo generar" in response.json()["detail"]
@@ -89,8 +120,6 @@ def test_estimate_handles_provider_error(monkeypatch):
         fake_generate_estimation_provider_error,
     )
 
-    response = client.post(
-        "/api/v1/estimate", json={"transcription": VALID_TRANSCRIPTION}
-    )
+    response = client.post("/api/v1/estimate", json=VALID_REQUEST)
 
     assert response.status_code == 502

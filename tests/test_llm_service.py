@@ -2,10 +2,16 @@ from collections.abc import Iterator
 
 import pytest
 
+from app.schemas import DetailLevel, EstimationRequest, OutputFormat, ProjectType
 from app.services import llm_service
 from app.services.providers import LLMProvider, LLMResult
 
-TRANSCRIPTION = "El cliente necesita una app de turnos con login y calendario."
+REQUEST = EstimationRequest(
+    description="El cliente necesita una app de turnos con login y calendario.",
+    project_type=ProjectType.MOBILE_APP,
+    detail_level=DetailLevel.MEDIUM,
+    output_format=OutputFormat.PHASES_TABLE,
+)
 
 
 class FakeProvider(LLMProvider):
@@ -15,9 +21,11 @@ class FakeProvider(LLMProvider):
         super().__init__(model="fake-model", max_tokens=1000)
         self.generate_calls = 0
         self.stream_calls = 0
+        self.last_user_message = None
 
     def generate(self, system_prompt: str, user_message: str) -> LLMResult:
         self.generate_calls += 1
+        self.last_user_message = user_message
         return LLMResult(
             text="## Estimación falsa",
             provider=self.name,
@@ -54,45 +62,59 @@ def test_system_prompt_includes_instructions_and_examples():
     assert "</ejemplos>" in prompt
 
 
-def test_generate_returns_result_and_misses_cache_first_time(fake_provider):
-    result = llm_service.generate_estimation(TRANSCRIPTION)
+def test_user_message_includes_all_form_fields():
+    message = llm_service.build_user_message(REQUEST)
 
-    assert result["estimation"] == "## Estimación falsa"
-    assert result["provider"] == "fake"
-    assert result["cache_hit"] is False
+    assert "Aplicación móvil" in message
+    assert "Intermedio" in message
+    assert "tabla en Markdown" in message
+    assert REQUEST.description in message
+
+
+def test_each_option_has_prompt_instructions():
+    assert set(llm_service.DETAIL_LEVEL_INSTRUCTIONS) == set(DetailLevel)
+    assert set(llm_service.OUTPUT_FORMAT_INSTRUCTIONS) == set(OutputFormat)
+
+
+def test_generate_returns_text_and_prompt_version(fake_provider):
+    response = llm_service.generate_estimation(REQUEST)
+
+    assert response.text == "## Estimación falsa"
+    assert response.prompt_version == llm_service.PROMPT_VERSION
     assert fake_provider.generate_calls == 1
 
 
-def test_generate_uses_cache_for_identical_transcription(fake_provider):
-    llm_service.generate_estimation(TRANSCRIPTION)
-    second = llm_service.generate_estimation(TRANSCRIPTION)
+def test_generate_uses_cache_for_identical_request(fake_provider):
+    llm_service.generate_estimation(REQUEST)
+    llm_service.generate_estimation(REQUEST)
 
-    assert second["cache_hit"] is True
     assert fake_provider.generate_calls == 1
 
 
-def test_generate_does_not_use_cache_for_different_transcription(fake_provider):
-    llm_service.generate_estimation(TRANSCRIPTION)
-    llm_service.generate_estimation(TRANSCRIPTION + " Además quiere pagos online.")
+def test_generate_does_not_use_cache_when_any_field_changes(fake_provider):
+    llm_service.generate_estimation(REQUEST)
+    llm_service.generate_estimation(
+        REQUEST.model_copy(update={"output_format": OutputFormat.NARRATIVE})
+    )
 
     assert fake_provider.generate_calls == 2
 
 
 def test_stream_yields_pieces_and_fills_metrics(fake_provider):
     metrics = {}
-    pieces = list(llm_service.stream_estimation(TRANSCRIPTION, metrics))
+    pieces = list(llm_service.stream_estimation(REQUEST, metrics))
 
     assert pieces == ["## Estimación ", "en streaming"]
     assert metrics["provider"] == "fake"
-    assert metrics["model"] == "fake-model"
     assert metrics["output_tokens"] == 90
     assert metrics["cache_hit"] is False
+    assert metrics["prompt_version"] == llm_service.PROMPT_VERSION
 
 
 def test_stream_uses_cache_on_second_call(fake_provider):
-    list(llm_service.stream_estimation(TRANSCRIPTION))
+    list(llm_service.stream_estimation(REQUEST))
     metrics = {}
-    pieces = list(llm_service.stream_estimation(TRANSCRIPTION, metrics))
+    pieces = list(llm_service.stream_estimation(REQUEST, metrics))
 
     assert "".join(pieces) == "## Estimación en streaming"
     assert metrics["cache_hit"] is True
@@ -106,6 +128,6 @@ def test_errors_are_not_cached(fake_provider, monkeypatch):
     monkeypatch.setattr(fake_provider, "generate", failing_generate)
 
     with pytest.raises(ValueError):
-        llm_service.generate_estimation(TRANSCRIPTION)
+        llm_service.generate_estimation(REQUEST)
 
     assert len(llm_service.cache) == 0
