@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     llm_provider: str = "anthropic"
-    llm_model: str = "claude-opus-5-5"
+    llm_model: str = "claude-haiku-4-5"
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
     app_env: str = "development"

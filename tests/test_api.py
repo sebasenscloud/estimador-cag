@@ -1,7 +1,9 @@
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
-from app.schemas import EstimationRequest, EstimationResponse
+from app.prompts.loader import render_estimation_prompt
+from app.schemas import EstimationRequest
 from app.services.providers import LLMProviderError
 
 client = TestClient(app)
@@ -16,19 +18,18 @@ VALID_REQUEST = {
     "output_format": "phases_table",
 }
 
-
-def fake_generate_estimation(request: EstimationRequest) -> EstimationResponse:
-    return EstimationResponse(
-        text="## Estimación: App de turnos\n\n**Total estimado: 120 horas**",
-        prompt_version="v-test",
-    )
+ESTIMATION_TEXT = "## Estimación: App de turnos\n\n**Total estimado: 120 horas**"
 
 
-def fake_generate_estimation_refusal(request: EstimationRequest):
+def fake_generate_text(system_prompt: str, user_message: str) -> str:
+    return ESTIMATION_TEXT
+
+
+def fake_generate_text_refusal(system_prompt: str, user_message: str) -> str:
     raise ValueError("El modelo no pudo generar la estimación.")
 
 
-def fake_generate_estimation_provider_error(request: EstimationRequest):
+def fake_generate_text_provider_error(system_prompt: str, user_message: str) -> str:
     raise LLMProviderError("API key inválida")
 
 
@@ -39,35 +40,34 @@ def test_health_check():
     assert response.json() == {"status": "ok"}
 
 
-def test_estimate_returns_estimation(monkeypatch):
-    monkeypatch.setattr(
-        "app.routers.estimations.generate_estimation", fake_generate_estimation
-    )
+def test_estimate_returns_text_and_prompt_version(monkeypatch):
+    monkeypatch.setattr("app.routers.estimations.generate_text", fake_generate_text)
 
     response = client.post("/api/v1/estimate", json=VALID_REQUEST)
 
     assert response.status_code == 200
-    assert response.json() == {
-        "text": "## Estimación: App de turnos\n\n**Total estimado: 120 horas**",
-        "prompt_version": "v-test",
-    }
+    assert response.json() == {"text": ESTIMATION_TEXT, "prompt_version": "v1"}
 
 
-def test_estimate_receives_typed_request(monkeypatch):
+def test_estimate_sends_rendered_system_and_user_separately(monkeypatch):
     received = {}
 
-    def capture(request: EstimationRequest) -> EstimationResponse:
-        received["request"] = request
-        return fake_generate_estimation(request)
+    def capture(system_prompt: str, user_message: str) -> str:
+        received["system"] = system_prompt
+        received["user"] = user_message
+        return ESTIMATION_TEXT
 
-    monkeypatch.setattr("app.routers.estimations.generate_estimation", capture)
+    monkeypatch.setattr("app.routers.estimations.generate_text", capture)
 
     client.post("/api/v1/estimate", json=VALID_REQUEST)
 
-    request = received["request"]
-    assert isinstance(request, EstimationRequest)
-    assert request.project_type.value == "mobile_app"
-    assert request.output_format.value == "phases_table"
+    expected_system, expected_user = render_estimation_prompt(
+        EstimationRequest(**VALID_REQUEST), version=settings.prompt_version
+    )
+    assert received["system"] == expected_system
+    assert received["user"] == expected_user
+    assert VALID_REQUEST["description"] not in received["system"]
+    assert VALID_REQUEST["description"] in received["user"]
 
 
 def test_estimate_requires_all_fields():
@@ -104,8 +104,7 @@ def test_estimate_rejects_unknown_enum_value():
 
 def test_estimate_handles_model_refusal(monkeypatch):
     monkeypatch.setattr(
-        "app.routers.estimations.generate_estimation",
-        fake_generate_estimation_refusal,
+        "app.routers.estimations.generate_text", fake_generate_text_refusal
     )
 
     response = client.post("/api/v1/estimate", json=VALID_REQUEST)
@@ -116,8 +115,7 @@ def test_estimate_handles_model_refusal(monkeypatch):
 
 def test_estimate_handles_provider_error(monkeypatch):
     monkeypatch.setattr(
-        "app.routers.estimations.generate_estimation",
-        fake_generate_estimation_provider_error,
+        "app.routers.estimations.generate_text", fake_generate_text_provider_error
     )
 
     response = client.post("/api/v1/estimate", json=VALID_REQUEST)

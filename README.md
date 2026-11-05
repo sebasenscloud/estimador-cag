@@ -63,6 +63,15 @@ No hace falta tocar código. La versión forma parte de la caché, así que las 
 
 Si el JSON no cumple el contrato, el servicio responde **422** con el detalle del error.
 
+### Flujo del endpoint
+
+`POST /api/v1/estimate` (`app/routers/estimations.py`):
+
+1. Recibe el body validado como `EstimationRequest`.
+2. Llama a `render_estimation_prompt(request)` y obtiene `(system, user)`.
+3. Llama al modelo con los dos mensajes separados a través del wrapper de proveedores. OpenAI recibe `role: "system"` y `role: "user"`; Anthropic recibe el system en su parámetro `system` y el user como mensaje.
+4. Devuelve un `EstimationResponse` con el texto y la `prompt_version` usada.
+
 ## Estructura
 
 ```
@@ -128,7 +137,7 @@ Las API keys se leen siempre desde `.env`. Nunca están escritas en el código, 
 | Variable | Descripción | Ejemplo |
 |---|---|---|
 | `LLM_PROVIDER` | Proveedor activo: `anthropic` u `openai` | `anthropic` |
-| `LLM_MODEL` | Modelo del proveedor activo | `claude-opus-5-5` / `gpt-4o-mini` |
+| `LLM_MODEL` | Modelo del proveedor activo | `claude-haiku-4-5` / `gpt-4o-mini` |
 | `ANTHROPIC_API_KEY` | API key de Anthropic | `sk-ant-...` |
 | `OPENAI_API_KEY` | API key de OpenAI | `sk-...` |
 | `APP_ENV` | Entorno; con `production` los logs salen en JSON | `development` |
@@ -208,7 +217,7 @@ Cada estimación que no sale de la caché hace una llamada real al LLM y consume
 Los logs aparecen en la terminal del servicio IA. Ejemplo:
 
 ```
-2026-11-05T13:20:07Z [info] llm_request_completed  cache_hit=False detail_level=medium duration_ms=8123 input_tokens=1240 model=claude-opus-5-5 output_format=phases_table output_tokens=580 project_type=mobile_app prompt_version=v1 provider=anthropic streaming=False
+2026-11-05T13:20:07Z [info] llm_request_completed  cache_hit=False detail_level=medium duration_ms=8123 input_tokens=1240 model=claude-haiku-4-5 output_format=phases_table output_tokens=580 project_type=mobile_app prompt_version=v1 provider=anthropic streaming=False
 ```
 
 Con `APP_ENV=production` se emiten en formato JSON, listos para un sistema de logs. El texto de las descripciones nunca se registra.

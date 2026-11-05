@@ -4,8 +4,6 @@ from collections.abc import Iterator
 import structlog
 
 from app.config import settings
-from app.prompts.loader import render_estimation_prompt
-from app.schemas import EstimationRequest, EstimationResponse
 from app.services.cache import ExactMatchCache
 from app.services.providers import LLMProvider, LLMResult, get_provider
 
@@ -18,21 +16,12 @@ def _cache_key(provider: LLMProvider, system_prompt: str, user_message: str) -> 
     return cache.make_key(provider.name, provider.model, system_prompt, user_message)
 
 
-def _log_completed(
-    result: LLMResult,
-    request: EstimationRequest,
-    cache_hit: bool,
-    streaming: bool,
-    start: float,
-):
+def _log_completed(result: LLMResult, cache_hit: bool, streaming: bool, start: float):
     logger.info(
         "llm_request_completed",
         provider=result.provider,
         model=result.model,
         prompt_version=settings.prompt_version,
-        project_type=request.project_type.value,
-        detail_level=request.detail_level.value,
-        output_format=request.output_format.value,
         input_tokens=result.input_tokens,
         output_tokens=result.output_tokens,
         cache_hit=cache_hit,
@@ -53,12 +42,10 @@ def _log_failed(provider: LLMProvider, error: Exception, streaming: bool):
     )
 
 
-def generate_estimation(request: EstimationRequest) -> EstimationResponse:
+def generate_text(system_prompt: str, user_message: str) -> str:
+    """Envía el system y el user prompt al proveedor activo y devuelve el texto."""
     start = time.perf_counter()
     provider = get_provider()
-    system_prompt, user_message = render_estimation_prompt(
-        request, version=settings.prompt_version
-    )
     key = _cache_key(provider, system_prompt, user_message)
 
     result = cache.get(key)
@@ -72,18 +59,16 @@ def generate_estimation(request: EstimationRequest) -> EstimationResponse:
             raise
         cache.set(key, result)
 
-    _log_completed(result, request, cache_hit=cache_hit, streaming=False, start=start)
-    return EstimationResponse(text=result.text, prompt_version=settings.prompt_version)
+    _log_completed(result, cache_hit=cache_hit, streaming=False, start=start)
+    return result.text
 
 
-def stream_estimation(
-    request: EstimationRequest, metrics: dict | None = None
+def stream_text(
+    system_prompt: str, user_message: str, metrics: dict | None = None
 ) -> Iterator[str]:
+    """Igual que generate_text, pero entrega la respuesta de a pedazos."""
     start = time.perf_counter()
     provider = get_provider()
-    system_prompt, user_message = render_estimation_prompt(
-        request, version=settings.prompt_version
-    )
     key = _cache_key(provider, system_prompt, user_message)
 
     result = cache.get(key)
@@ -111,7 +96,7 @@ def stream_estimation(
         )
         cache.set(key, result)
 
-    _log_completed(result, request, cache_hit=cache_hit, streaming=True, start=start)
+    _log_completed(result, cache_hit=cache_hit, streaming=True, start=start)
 
     if metrics is not None:
         metrics.update(

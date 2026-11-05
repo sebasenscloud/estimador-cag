@@ -54,9 +54,13 @@ def test_anthropic_generate_maps_response(monkeypatch):
         content=[SimpleNamespace(type="text", text="## Estimación")],
         usage=SimpleNamespace(input_tokens=1000, output_tokens=200),
     )
-    monkeypatch.setattr(
-        provider._client.messages, "create", lambda **kwargs: fake_response
-    )
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return fake_response
+
+    monkeypatch.setattr(provider._client.messages, "create", fake_create)
 
     result = provider.generate("system", "transcripción")
 
@@ -64,6 +68,8 @@ def test_anthropic_generate_maps_response(monkeypatch):
     assert result.provider == "anthropic"
     assert result.input_tokens == 1000
     assert result.output_tokens == 200
+    assert captured["system"] == "system"
+    assert captured["messages"] == [{"role": "user", "content": "transcripción"}]
 
 
 def test_openai_generate_maps_response(monkeypatch):
@@ -94,7 +100,10 @@ def test_openai_generate_maps_response(monkeypatch):
     assert result.provider == "openai"
     assert result.input_tokens == 900
     assert result.output_tokens == 150
-    assert captured["messages"][0] == {"role": "system", "content": "system"}
+    assert captured["messages"] == [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "transcripción"},
+    ]
 
 
 def test_openai_stream_yields_text_and_fills_usage(monkeypatch):
