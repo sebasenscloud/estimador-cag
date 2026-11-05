@@ -1,11 +1,15 @@
 import time
 from textwrap import dedent
 
-import anthropic
 import streamlit as st
 
+from app.config import settings
 from app.context.examples import ESTIMATION_EXAMPLES
+from app.logging_config import configure_logging
 from app.services.llm_service import build_system_prompt, stream_estimation
+from app.services.providers import LLMProviderError
+
+configure_logging(settings.log_level, json_logs=settings.app_env == "production")
 
 st.set_page_config(page_title="Estimador CAG", page_icon="🧮")
 st.title("Estimador de proyectos de software")
@@ -20,18 +24,30 @@ if "messages" not in st.session_state:
 if "last_metrics" not in st.session_state:
     st.session_state.last_metrics = None
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+chat_area = st.container()
 
-transcription = st.chat_input("Pegá acá la transcripción de la reunión...")
+with chat_area:
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-if transcription:
+with st.form("transcription_form", clear_on_submit=True):
+    transcription = st.text_area(
+        "Transcripción de la reunión",
+        height=180,
+        placeholder="Pegá acá la transcripción de la reunión...",
+    )
+    submitted = st.form_submit_button("Enviar", type="primary")
+
+if submitted and not transcription.strip():
+    st.warning("Escribí o pegá una transcripción antes de enviar.")
+
+if submitted and transcription.strip():
     st.session_state.messages.append({"role": "user", "content": transcription})
-    with st.chat_message("user"):
+    with chat_area, st.chat_message("user"):
         st.markdown(transcription)
 
-    with st.chat_message("assistant"):
+    with chat_area, st.chat_message("assistant"):
         metrics = {}
         start_time = time.perf_counter()
         try:
@@ -41,7 +57,7 @@ if transcription:
         except ValueError as error:
             answer = f"⚠️ {error}"
             st.markdown(answer)
-        except anthropic.APIError:
+        except LLMProviderError:
             answer = (
                 "⚠️ No se pudo conectar con el proveedor de LLM. "
                 "Revisá tu API key y tu conexión."
@@ -73,6 +89,9 @@ with st.sidebar:
             "Todavía no hay llamadas. Enviá una transcripción para ver las métricas."
         )
     else:
+        provider_column, cache_column = st.columns(2)
+        provider_column.metric("Proveedor", last_metrics["provider"])
+        cache_column.metric("Caché", "Acierto" if last_metrics["cache_hit"] else "—")
         st.metric("Modelo", last_metrics["model"])
         input_column, output_column = st.columns(2)
         input_column.metric("Tokens de entrada", f"{last_metrics['input_tokens']:,}")
