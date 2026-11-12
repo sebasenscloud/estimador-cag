@@ -11,8 +11,7 @@ jobs:
 
     env:
       ANTHROPIC_API_KEY: fake-key-for-ci
-      LLM_PROVIDER: anthropic
-      LLM_MODEL: claude-opus-5-5
+      LLM_MODEL: anthropic/claude-haiku-4-5
       APP_ENV: test
       LOG_LEVEL: info
       MAX_TOKENS: "16000"

@@ -1,99 +1,258 @@
 import time
-from textwrap import dedent
+from collections.abc import Callable
 
+import httpx
 import streamlit as st
+from pydantic import ValidationError
 
 from app.config import settings
-from app.context.examples import ESTIMATION_EXAMPLES
-from app.logging_config import configure_logging
-from app.services.llm_service import build_system_prompt, stream_estimation
-from app.services.providers import LLMProviderError
+from app.schemas import (
+    DETAIL_LEVEL_LABELS,
+    OUTPUT_FORMAT_LABELS,
+    PROJECT_TYPE_LABELS,
+    DetailLevel,
+    EstimationRequest,
+    EstimationResponse,
+    EstimationResult,
+    EstimationStreamEvent,
+    OutputFormat,
+    ProjectType,
+)
 
-configure_logging(settings.log_level, json_logs=settings.app_env == "production")
+ESTIMATE_URL = f"{settings.estimator_api_url}/api/v1/estimate/stream"
+
+
+class EstimationStreamError(Exception):
+    """El servicio IA informó un error a mitad del stream."""
+
+
+def stream_estimation(
+    request: EstimationRequest, on_partial: Callable[[dict], None]
+) -> EstimationResponse:
+    """Envía el formulario y lee el stream NDJSON del servicio IA.
+
+    Llama a `on_partial` con cada resultado parcial y devuelve la respuesta
+    final, ya validada con la misma clase Pydantic que usa el servicio.
+    """
+    with httpx.stream(
+        "POST",
+        ESTIMATE_URL,
+        json=request.model_dump(mode="json"),
+        timeout=settings.estimator_api_timeout,
+    ) as response:
+        if response.status_code >= 400:
+            response.read()
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if not line.strip():
+                continue
+            event = EstimationStreamEvent.model_validate_json(line)
+            if event.type == "partial":
+                on_partial(event.partial)
+            elif event.type == "final":
+                return event.response
+            else:
+                raise EstimationStreamError(event.detail)
+    raise EstimationStreamError("El stream terminó sin una respuesta final.")
+
+
+def error_detail(response: httpx.Response) -> str:
+    try:
+        detail = response.json().get("detail")
+    except ValueError:
+        return response.text
+    if isinstance(detail, list):
+        return "; ".join(item.get("msg", str(item)) for item in detail)
+    return str(detail)
+
+
+def euros(amount: int) -> str:
+    return f"{amount:,} €".replace(",", ".")
+
+
+def render_partial(partial: dict) -> None:
+    """Muestra lo que el modelo lleva generado mientras llega el stream."""
+    st.caption("Generando estimación…")
+    if partial.get("summary"):
+        st.write(partial["summary"])
+    phases = [phase for phase in partial.get("phases") or [] if phase.get("name")]
+    if phases:
+        st.dataframe(
+            [
+                {
+                    "Fase": phase.get("name"),
+                    "Semanas": phase.get("duration_weeks"),
+                    "Costo": euros(phase["cost_eur"])
+                    if phase.get("cost_eur") is not None
+                    else None,
+                    "Confianza": f"{phase['confidence_pct']} %"
+                    if phase.get("confidence_pct") is not None
+                    else None,
+                }
+                for phase in phases
+            ],
+            hide_index=True,
+        )
+
+
+def render_estimation(result: EstimationResult, output_format: OutputFormat) -> None:
+    """Dibuja los datos estructurados según el formato elegido en el formulario."""
+    st.subheader("Estimación")
+    if result.is_out_of_scope:
+        # Respuesta degradada por el output guardrail (política FILTER).
+        st.warning(result.summary)
+        st.caption(f"Confianza: {result.confidence_pct} %. Siguiente paso sugerido:")
+        for phase in result.phases:
+            st.markdown(f"- **{phase.name}:** {phase.description}")
+        return
+
+    weeks_column, cost_column, confidence_column = st.columns(3)
+    weeks_column.metric("Duración total", f"{result.total_duration_weeks} semanas")
+    cost_column.metric("Costo total", euros(result.total_cost_eur))
+    confidence_column.metric("Confianza", f"{result.confidence_pct} %")
+    st.write(result.summary)
+
+    if output_format == OutputFormat.PHASES_TABLE:
+        st.dataframe(
+            [
+                {
+                    "Fase": phase.name,
+                    "Semanas": phase.duration_weeks,
+                    "Costo": euros(phase.cost_eur),
+                    "Confianza": f"{phase.confidence_pct} %",
+                    "Descripción": phase.description,
+                }
+                for phase in result.phases
+            ],
+            hide_index=True,
+        )
+    elif output_format == OutputFormat.LINE_ITEMS:
+        st.markdown(
+            "\n".join(
+                f"- **{phase.name}** ({phase.duration_weeks} sem., "
+                f"{euros(phase.cost_eur)}, confianza {phase.confidence_pct} %): "
+                f"{phase.description}"
+                for phase in result.phases
+            )
+        )
+    else:
+        for number, phase in enumerate(result.phases, start=1):
+            st.markdown(
+                f"**{number}. {phase.name}.** {phase.description} Esta fase lleva "
+                f"{phase.duration_weeks} semanas, cuesta {euros(phase.cost_eur)} "
+                f"y la estimamos con una confianza del {phase.confidence_pct} %."
+            )
+
 
 st.set_page_config(page_title="Estimador CAG", page_icon="🧮")
 st.title("Estimador de proyectos de software")
 st.caption(
-    "Pegá la transcripción de una reunión con un cliente "
-    "y te devuelvo una estimación de esfuerzo."
+    "Describí el proyecto, elegí cómo querés la estimación y enviá el formulario."
 )
 
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+if "last_result" not in st.session_state:
+    st.session_state.last_result = None
 
-if "last_metrics" not in st.session_state:
-    st.session_state.last_metrics = None
-
-chat_area = st.container()
-
-with chat_area:
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-with st.form("transcription_form", clear_on_submit=True):
-    transcription = st.text_area(
-        "Transcripción de la reunión",
+with st.form("estimation_form"):
+    description = st.text_area(
+        "Descripción del proyecto",
         height=180,
-        placeholder="Pegá acá la transcripción de la reunión...",
+        max_chars=2000,
+        placeholder="Ej.: El cliente necesita una app para reservar turnos...",
     )
-    submitted = st.form_submit_button("Enviar", type="primary")
+    project_type = st.selectbox(
+        "Tipo de proyecto",
+        options=list(ProjectType),
+        format_func=lambda option: PROJECT_TYPE_LABELS[ProjectType(option)],
+    )
+    detail_column, format_column = st.columns(2)
+    detail_level = detail_column.selectbox(
+        "Nivel de detalle",
+        options=list(DetailLevel),
+        index=1,
+        format_func=lambda option: DETAIL_LEVEL_LABELS[DetailLevel(option)],
+    )
+    output_format = format_column.selectbox(
+        "Formato de salida",
+        options=list(OutputFormat),
+        format_func=lambda option: OUTPUT_FORMAT_LABELS[OutputFormat(option)],
+    )
+    submitted = st.form_submit_button("Estimar", type="primary")
 
-if submitted and not transcription.strip():
-    st.warning("Escribí o pegá una transcripción antes de enviar.")
-
-if submitted and transcription.strip():
-    st.session_state.messages.append({"role": "user", "content": transcription})
-    with chat_area, st.chat_message("user"):
-        st.markdown(transcription)
-
-    with chat_area, st.chat_message("assistant"):
-        metrics = {}
+if submitted:
+    try:
+        request = EstimationRequest(
+            description=description,
+            project_type=project_type,
+            detail_level=detail_level,
+            output_format=output_format,
+        )
+    except ValidationError:
+        st.warning("La descripción tiene que tener entre 20 y 2000 caracteres.")
+    else:
         start_time = time.perf_counter()
-        try:
-            answer = st.write_stream(stream_estimation(transcription, metrics))
-            metrics["elapsed_seconds"] = time.perf_counter() - start_time
-            st.session_state.last_metrics = metrics
-        except ValueError as error:
-            answer = f"⚠️ {error}"
-            st.markdown(answer)
-        except LLMProviderError:
-            answer = (
-                "⚠️ No se pudo conectar con el proveedor de LLM. "
-                "Revisá tu API key y tu conexión."
-            )
-            st.markdown(answer)
+        progress = st.empty()
 
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+        def show_partial(partial: dict) -> None:
+            with progress.container():
+                render_partial(partial)
+
+        try:
+            result = stream_estimation(request, on_partial=show_partial)
+        except EstimationStreamError as error:
+            st.error(f"El servicio IA no pudo completar la estimación: {error}")
+        except httpx.ConnectError:
+            st.error(
+                "No se pudo conectar con el servicio IA en "
+                f"{settings.estimator_api_url}. ¿Está corriendo? Inicialo con: "
+                "`uv run uvicorn app.main:app --reload`"
+            )
+        except httpx.TimeoutException:
+            st.error("El servicio IA tardó demasiado en responder. Probá de nuevo.")
+        except httpx.HTTPStatusError as error:
+            st.error(
+                f"El servicio IA respondió con error {error.response.status_code}: "
+                f"{error_detail(error.response)}"
+            )
+        else:
+            st.session_state.last_result = {
+                "request": request,
+                "response": result,
+                "elapsed_seconds": time.perf_counter() - start_time,
+            }
+        finally:
+            # La vista parcial se reemplaza por el resultado final o por el error.
+            progress.empty()
+
+last_result = st.session_state.last_result
+
+if last_result is not None:
+    render_estimation(
+        last_result["response"].result, last_result["request"].output_format
+    )
 
 with st.sidebar:
-    st.header("Contexto CAG")
-
-    st.subheader("System prompt activo")
-    with st.expander("Ver system prompt"):
-        st.code(build_system_prompt(), language=None, wrap_lines=True)
-
-    st.subheader("Contexto estático inyectado")
-    st.caption(f"{len(ESTIMATION_EXAMPLES)} estimaciones de ejemplo alimentan el CAG")
-    for number, example in enumerate(ESTIMATION_EXAMPLES, start=1):
-        with st.expander(f"Ejemplo {number}"):
-            st.markdown("**Reunión**")
-            st.write(example["meeting_summary"])
-            st.markdown("**Estimación**")
-            st.markdown(dedent(example["estimation"]))
-
-    st.subheader("Métricas de la última llamada")
-    last_metrics = st.session_state.last_metrics
-    if last_metrics is None:
-        st.info(
-            "Todavía no hay llamadas. Enviá una transcripción para ver las métricas."
-        )
+    st.header("Última estimación")
+    if last_result is None:
+        st.info("Todavía no hay estimaciones. Completá el formulario y enviálo.")
     else:
-        provider_column, cache_column = st.columns(2)
-        provider_column.metric("Proveedor", last_metrics["provider"])
-        cache_column.metric("Caché", "Acierto" if last_metrics["cache_hit"] else "—")
-        st.metric("Modelo", last_metrics["model"])
-        input_column, output_column = st.columns(2)
-        input_column.metric("Tokens de entrada", f"{last_metrics['input_tokens']:,}")
-        output_column.metric("Tokens de salida", f"{last_metrics['output_tokens']:,}")
-        st.metric("Tiempo de respuesta", f"{last_metrics['elapsed_seconds']:.1f} s")
+        sent: EstimationRequest = last_result["request"]
+        version_column, time_column = st.columns(2)
+        version_column.metric(
+            "Versión del prompt", last_result["response"].prompt_version
+        )
+        time_column.metric("Tiempo", f"{last_result['elapsed_seconds']:.1f} s")
+        st.metric(
+            "Caché", "Acierto" if last_result["response"].cached else "Llamada al LLM"
+        )
+
+        st.subheader("Parámetros enviados")
+        st.markdown(
+            f"- **Tipo de proyecto:** {PROJECT_TYPE_LABELS[sent.project_type]}\n"
+            f"- **Nivel de detalle:** {DETAIL_LEVEL_LABELS[sent.detail_level]}\n"
+            f"- **Formato de salida:** {OUTPUT_FORMAT_LABELS[sent.output_format]}"
+        )
+        with st.expander("Ver JSON enviado al servicio"):
+            st.json(sent.model_dump(mode="json"))
+
+    st.caption(f"Servicio IA: {ESTIMATE_URL}")

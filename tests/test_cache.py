@@ -1,15 +1,14 @@
-from app.services.cache import ExactMatchCache
-from app.services.providers import LLMResult
+from pydantic import BaseModel
+
+from app.cache.exact import ExactMatchCache
 
 
-def make_result(text: str) -> LLMResult:
-    return LLMResult(
-        text=text,
-        provider="anthropic",
-        model="claude-opus-5-5",
-        input_tokens=100,
-        output_tokens=50,
-    )
+class FakeResult(BaseModel):
+    text: str
+
+
+def make_result(text: str) -> FakeResult:
+    return FakeResult(text=text)
 
 
 def test_same_request_produces_same_key():
