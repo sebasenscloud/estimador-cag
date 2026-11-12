@@ -284,7 +284,16 @@ with st.sidebar:
     if st.session_state.last_attachments:
         st.subheader("Adjuntos del último turno")
         for item in st.session_state.last_attachments:
-            st.markdown(f"- **{item.filename}**: {item.extracted_chars:,} caracteres")
+            path = "camino A" if item.strategy == "multimodal" else "camino B"
+            detail = (
+                "enviado al modelo como archivo"
+                if item.strategy == "multimodal"
+                else f"{item.extracted_chars:,} caracteres extraídos"
+            )
+            st.markdown(
+                f"- **{item.filename}**: `{item.tool}` ({path}), {detail}  \n"
+                f"  _{item.reason}_"
+            )
             if item.warning:
                 st.warning(item.warning)
 

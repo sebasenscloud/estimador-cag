@@ -7,11 +7,13 @@ from fastapi.testclient import TestClient
 from app.attachments import (
     Attachment,
     AttachmentError,
-    LocalTextExtractor,
+    AttachmentRouter,
     ProcessedAttachment,
+    analyze_pdf,
     build_user_content,
     validate_attachments,
 )
+from app.attachments.extractors import extract_pdf_with_pymupdf
 from app.config import settings
 from app.main import app
 from app.services import session_estimation
@@ -20,6 +22,12 @@ from app.sessions import session_store
 client = TestClient(app)
 
 TRANSCRIPT = "El cliente quiere una app de turnos para su cadena de peluquerías."
+
+# Más de ATTACHMENT_MIN_CHARS_PER_PAGE caracteres: el router lo trata como PDF de texto.
+REQUIREMENTS = (
+    "Requisitos: login con Google, reservas online por sucursal, recordatorios "
+    "por email y un panel para que cada peluquero vea su agenda del día."
+)
 
 
 def make_pdf(text: str) -> bytes:
@@ -51,6 +59,19 @@ def make_pdf(text: str) -> bytes:
     return output.getvalue()
 
 
+def make_image_only_pdf(pages: int = 1) -> bytes:
+    """PDF con una imagen por página y sin texto: simula un documento escaneado."""
+    import pymupdf
+
+    document = pymupdf.open()
+    pixmap = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 40, 40), False)
+    pixmap.set_rect(pixmap.irect, (200, 30, 30))
+    for _ in range(pages):
+        page = document.new_page()
+        page.insert_image(pymupdf.Rect(50, 50, 300, 300), pixmap=pixmap)
+    return document.tobytes()
+
+
 def make_docx(paragraphs: list[str]) -> bytes:
     document = docx.Document()
     for paragraph in paragraphs:
@@ -61,62 +82,99 @@ def make_docx(paragraphs: list[str]) -> bytes:
 
 
 def text_of(result: ProcessedAttachment) -> str:
-    return "".join(part["text"] for part in result.content_parts)
+    return "".join(part.get("text", "") for part in result.content_parts)
 
 
-def test_extracts_text_from_pdf_as_a_text_block_with_separator():
-    extractor = LocalTextExtractor(max_chars=1000)
-
-    result = extractor.process(
-        Attachment("requisitos.pdf", make_pdf("Login con Google y pagos"))
+def router(strategy: str = "auto", max_chars: int = 20_000) -> AttachmentRouter:
+    return AttachmentRouter(
+        strategy=strategy, max_chars=max_chars, model="anthropic/claude-haiku-4-5"
     )
 
+
+def test_analysis_measures_text_and_images():
+    text_profile = analyze_pdf(make_pdf(REQUIREMENTS))
+    image_profile = analyze_pdf(make_image_only_pdf(pages=2))
+
+    assert text_profile.pages == 1
+    assert text_profile.chars_per_page > 100
+    assert text_profile.images == 0
+    assert image_profile.pages == 2
+    assert image_profile.text_chars == 0
+    assert image_profile.images_per_page == 1
+
+
+def test_text_pdf_is_extracted_with_pypdf():
+    result = router().process(Attachment("requisitos.pdf", make_pdf(REQUIREMENTS)))
+
+    assert result.strategy == "local_text"
+    assert result.tool == "pypdf"
     assert [part["type"] for part in result.content_parts] == ["text"]
     assert text_of(result).startswith("--- attachment: requisitos.pdf ---\n")
-    assert "Login con Google y pagos" in text_of(result)
-    assert result.extracted_chars == len("Login con Google y pagos")
-    assert result.warnings == []
+    assert "login con Google" in text_of(result)
+    assert result.extracted_chars > 100
 
 
-def test_extracts_text_from_docx():
-    extractor = LocalTextExtractor(max_chars=1000)
+def test_scanned_pdf_goes_multimodal_in_auto_mode():
+    result = router().process(Attachment("escaneado.pdf", make_image_only_pdf()))
+
+    assert result.strategy == "multimodal"
+    assert result.tool == "multimodal_inline"
+    assert "escaneado" in result.reason
+    file_block = result.content_parts[-1]
+    assert file_block["type"] == "file"
+    assert file_block["file"]["file_data"].startswith("data:application/pdf;base64,")
+    assert file_block["file"]["filename"] == "escaneado.pdf"
+
+
+def test_scanned_pdf_in_local_text_mode_warns_instead_of_going_multimodal():
+    result = router("local_text").process(
+        Attachment("escaneado.pdf", make_image_only_pdf())
+    )
+
+    assert result.strategy == "local_text"
+    assert result.tool == "pymupdf"
+    assert result.warnings
+
+
+def test_multimodal_mode_sends_every_pdf_as_a_file():
+    result = router("multimodal").process(
+        Attachment("requisitos.pdf", make_pdf(REQUIREMENTS))
+    )
+
+    assert result.tool == "multimodal_inline"
+
+
+def test_docx_always_uses_python_docx():
     data = make_docx(["Alcance: reservas online", "Equipo: 2 desarrolladores"])
 
-    result = extractor.process(Attachment("minuta.docx", data))
-
-    assert "Alcance: reservas online" in text_of(result)
-    assert "Equipo: 2 desarrolladores" in text_of(result)
+    for strategy in ("auto", "multimodal"):
+        result = router(strategy).process(Attachment("minuta.docx", data))
+        assert result.tool == "python-docx"
+        assert "Alcance: reservas online" in text_of(result)
 
 
 def test_long_text_is_truncated_with_a_warning():
-    extractor = LocalTextExtractor(max_chars=10)
-
-    result = extractor.process(Attachment("largo.docx", make_docx(["x" * 50])))
+    result = router(max_chars=10).process(
+        Attachment("largo.docx", make_docx(["x" * 50]))
+    )
 
     assert result.truncated is True
     assert result.extracted_chars == 10
     assert result.warnings
 
 
-def test_document_without_text_returns_a_warning():
-    extractor = LocalTextExtractor(max_chars=1000)
-
-    result = extractor.process(Attachment("vacio.docx", make_docx([])))
-
-    assert result.extracted_chars == 0
-    assert "escaneado" in result.warnings[0]
+def test_pymupdf_extractor_reads_the_text():
+    assert "login con Google" in extract_pdf_with_pymupdf(make_pdf(REQUIREMENTS))
 
 
 def test_corrupt_pdf_raises_attachment_error():
     with pytest.raises(AttachmentError):
-        LocalTextExtractor(max_chars=1000).process(Attachment("roto.pdf", b"no-pdf"))
+        router().process(Attachment("roto.pdf", b"no-pdf"))
 
 
 def test_unsupported_format_is_rejected():
     with pytest.raises(AttachmentError, match="formato no soportado"):
-        validate_attachments(
-            [Attachment("planilla.xlsx", b"datos")], LocalTextExtractor(1000)
-        )
+        validate_attachments([Attachment("planilla.xlsx", b"datos")])
 
 
 def test_too_many_attachments_are_rejected(monkeypatch):
@@ -124,7 +182,7 @@ def test_too_many_attachments_are_rejected(monkeypatch):
     files = [Attachment("a.pdf", b"x"), Attachment("b.pdf", b"x")]
 
     with pytest.raises(AttachmentError, match="máximo"):
-        validate_attachments(files, LocalTextExtractor(1000))
+        validate_attachments(files)
 
 
 def test_user_content_puts_the_prompt_first_and_then_each_attachment():
@@ -183,7 +241,7 @@ def test_endpoint_accepts_transcript_and_attachments(prompts_sent):
         f"/api/v1/sessions/{session_id}/estimate",
         data={"transcript": TRANSCRIPT, "project_type": "mobile_app"},
         files=[
-            ("attachments", ("requisitos.pdf", make_pdf("Login con Google"))),
+            ("attachments", ("requisitos.pdf", make_pdf(REQUIREMENTS))),
             ("attachments", ("minuta.docx", make_docx(["Pagos con Stripe"]))),
         ],
     )
@@ -191,15 +249,15 @@ def test_endpoint_accepts_transcript_and_attachments(prompts_sent):
     assert response.status_code == 200
     body = response.json()
     assert body["session_id"] == session_id
-    assert [item["filename"] for item in body["attachments"]] == [
-        "requisitos.pdf",
-        "minuta.docx",
+    assert [(item["filename"], item["tool"]) for item in body["attachments"]] == [
+        ("requisitos.pdf", "pypdf"),
+        ("minuta.docx", "python-docx"),
     ]
     content = prompts_sent[0]
     assert len(content) == 3
     assert TRANSCRIPT in content[0]["text"]
     assert content[1]["text"].startswith("--- attachment: requisitos.pdf ---")
-    assert "Login con Google" in content[1]["text"]
+    assert "login con Google" in content[1]["text"]
     assert content[2]["text"].startswith("--- attachment: minuta.docx ---")
     assert "Pagos con Stripe" in content[2]["text"]
 

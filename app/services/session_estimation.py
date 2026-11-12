@@ -1,7 +1,9 @@
 """Caso de uso: estimar dentro de una sesión, con adjuntos opcionales.
 
 1. Recuperar la sesión            → SessionNotFoundError si no existe
-2. Validar y procesar adjuntos     → AttachmentError (política exception)
+2. Validar y procesar adjuntos     → AttachmentError (política exception). El
+                                      router elige por documento: pypdf, PyMuPDF,
+                                      python-docx o multimodal (camino A)
 3. Armar messages                  → history.to_messages_list(): system regenerado
                                       con la metadata actual + turnos de la ventana,
                                       y al final el user actual (prompt + adjuntos)
@@ -44,10 +46,31 @@ def estimate_in_session(
 ) -> SessionEstimationResponse:
     session = session_store.get(session_id)
 
-    processor = get_attachment_processor()
-    validate_attachments(attachments, processor)
-    processed = [processor.process(attachment) for attachment in attachments]
+    validate_attachments(attachments)
+    router = get_attachment_processor()
+    processed: list[ProcessedAttachment] = []
+    try:
+        for attachment in attachments:
+            item = router.process(attachment)
+            processed.append(item)
+            logger.info(
+                "attachment_routed",
+                filename=item.filename,
+                strategy=item.strategy,
+                tool=item.tool,
+                reason=item.reason,
+                extracted_chars=item.extracted_chars,
+            )
+        return _run_turn(session, request, processed)
+    finally:
+        # Los archivos subidos a la Files API se borran al terminar el turno,
+        # haya salido bien o no: su contenido ya quedó en project_metadata.
+        _cleanup(processed)
 
+
+def _run_turn(
+    session, request: EstimationRequest, processed: list[ProcessedAttachment]
+) -> SessionEstimationResponse:
     def build_system_prompt(metadata: ProjectMetadata) -> str:
         system_prompt, _ = render_estimation_prompt(
             request, version=settings.prompt_version, project_metadata=metadata
@@ -86,8 +109,20 @@ def estimate_in_session(
         result=result,
         project_metadata=session.metadata,
         prompt_version=settings.prompt_version,
-        attachments=[_info(item, processor.strategy) for item in processed],
+        attachments=[_info(item) for item in processed],
     )
+
+
+def _cleanup(processed: list[ProcessedAttachment]) -> None:
+    for item in processed:
+        if item.cleanup is None:
+            continue
+        try:
+            item.cleanup()
+        except Exception as error:  # noqa: BLE001 - la limpieza es best-effort
+            logger.warning(
+                "attachment_cleanup_failed", filename=item.filename, error=str(error)
+            )
 
 
 def _history_user_message(
@@ -99,10 +134,12 @@ def _history_user_message(
     return f"{user_message}\n\n[Adjuntos de este turno: {names}]"
 
 
-def _info(item: ProcessedAttachment, strategy: str) -> AttachmentInfo:
+def _info(item: ProcessedAttachment) -> AttachmentInfo:
     return AttachmentInfo(
         filename=item.filename,
-        strategy=strategy,
+        strategy=item.strategy,
+        tool=item.tool,
+        reason=item.reason,
         extracted_chars=item.extracted_chars,
         truncated=item.truncated,
         warning=" ".join(item.warnings) or None,

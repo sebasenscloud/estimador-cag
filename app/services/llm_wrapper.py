@@ -49,7 +49,7 @@ def provider_name(model: str) -> str:
     return litellm.get_llm_provider(model)[1]
 
 
-def _api_key(model: str) -> str:
+def api_key_for(model: str) -> str:
     keys = {
         "anthropic": settings.anthropic_api_key,
         "openai": settings.openai_api_key,
@@ -101,7 +101,7 @@ def generate_structured_from_messages(
             response_model=response_model,
             max_retries=settings.llm_max_retries,
             max_tokens=settings.max_tokens,
-            api_key=_api_key(model),
+            api_key=api_key_for(model),
         )
     except InstructorRetryException as error:
         _log_failed(model, error)
@@ -145,7 +145,7 @@ def stream_structured(
             response_model=response_model,
             max_retries=settings.llm_max_retries,
             max_tokens=settings.max_tokens,
-            api_key=_api_key(model),
+            api_key=api_key_for(model),
         )
     except InstructorRetryException as error:
         _log_failed(model, error)

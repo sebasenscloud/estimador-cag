@@ -221,30 +221,40 @@ curl -X POST http://127.0.0.1:8000/api/v1/sessions/<session_id>/estimate \
 
 JSON y archivos no pueden viajar en el mismo body, por eso los campos tipados llegan como campos de formulario. FastAPI los valida igual (los enums rechazan valores desconocidos con 422) y el endpoint arma con ellos el mismo `EstimationRequest` de siempre.
 
-### Camino elegido para los adjuntos: B (extracción local)
+### Adjuntos: los dos caminos, elegidos por documento
 
-El texto se extrae en el servicio IA (`pypdf` para PDF, `python-docx` para Word) y va al modelo a continuación de la transcripción, cada adjunto con su separador:
+El servicio implementa **los dos caminos** y un **router** (`app/attachments/router.py`) decide, documento por documento, cuál usar.
 
-```
-<prompt con la transcripción>
+| Camino | Herramienta | Cuándo |
+|---|---|---|
+| B: extracción local | **pypdf** | PDF de texto simple: lo más liviano |
+| B: extracción local | **PyMuPDF** (`pymupdf4llm`) | PDF con tablas (las convierte a Markdown) o largo (más de `ATTACHMENT_LARGE_PDF_PAGES` páginas) |
+| B: extracción local | **python-docx** | Siempre para Word: las APIs multimodales no aceptan `.docx` |
+| A: multimodal | El LLM lee el PDF | PDF casi sin texto (escaneado) o dominado por imágenes y diagramas |
 
---- attachment: requisitos.pdf ---
-<texto del PDF>
+Antes de decidir, `analyze_pdf` (PyMuPDF) mide en una pasada las páginas, el texto por página, las imágenes y las tablas. La decisión (`decide_pdf`) es una función pura, sin I/O, así que se testea con perfiles sintéticos. Cada adjunto informa en la respuesta qué herramienta se usó y por qué (`attachments[].tool` y `attachments[].reason`), y el log `attachment_routed` lo registra.
 
---- attachment: minuta.docx ---
-<texto del Word>
-```
+Si el modelo configurado no acepta PDF, el camino A no está disponible y el router cae a PyMuPDF con un aviso.
 
-Por qué B:
+**Configuración en `.env`:**
 
-- **Independiente del proveedor:** el LLM solo recibe texto, así que funciona igual con cualquier modelo detrás de LiteLLM.
-- **Control y observabilidad:** sabemos exactamente qué texto entra al prompt, podemos recortarlo (`ATTACHMENT_MAX_CHARS`) y medirlo en los logs.
-- **Testeable sin API:** la extracción se prueba con archivos generados en los tests.
-- **Prepara RAG:** el texto extraído es lo que en el módulo 3 se va a trocear (chunking) e indexar.
+| Variable | Valores | Efecto |
+|---|---|---|
+| `ATTACHMENT_STRATEGY` | `auto` (por defecto) | El router elige por documento |
+| | `local_text` | Siempre camino B (pypdf o PyMuPDF según el documento) |
+| | `multimodal` | Los PDFs siempre van por el camino A |
+| `ATTACHMENT_MULTIMODAL_MODE` | `inline` (por defecto) | El PDF viaja en base64 dentro del mensaje. Sin estado en el proveedor; se reenvía en cada llamada |
+| | `files_api` | El PDF se sube a la Files API del proveedor y el mensaje lleva solo su `file_id`. Se borra al terminar el turno, aunque el turno falle |
 
-Limitaciones conocidas: no ve imágenes, gráficos ni el diseño del documento, y un PDF escaneado no tiene texto extraíble (la respuesta lo avisa en `attachments[].warning`).
+Umbrales del router: `ATTACHMENT_MIN_CHARS_PER_PAGE` (debajo = escaneado), `ATTACHMENT_IMAGE_HEAVY_PER_PAGE` y `ATTACHMENT_VISUAL_MAX_CHARS_PER_PAGE` (documento visual), `ATTACHMENT_LARGE_PDF_PAGES` (documento largo).
 
-### Preparado para el camino A (multimodal directo)
+**Por qué este diseño:** ninguno de los dos caminos es mejor en todos los casos. El camino B es barato, controlable (sabemos qué texto entra y lo recortamos con `ATTACHMENT_MAX_CHARS`), independiente del proveedor y prepara RAG; pero pierde la información visual y no lee escaneados. El camino A entiende imágenes y diagramas, pero consume más tokens y depende del proveedor. El router usa B cuando alcanza y A solo cuando el contenido es visual.
+
+En el camino B el texto va a continuación de la transcripción con un separador (`--- attachment: requisitos.pdf ---`). En el camino A va un bloque `{"type": "file"}` que LiteLLM traduce al formato de cada proveedor (un bloque `document` en Anthropic).
+
+Docling se evaluó para documentos con estructura compleja, pero quedó afuera por su peso (PyTorch y modelos de visión). Si se suma, sería otra herramienta del router, sin tocar el resto.
+
+### Bloques de contenido: cómo conviven los dos caminos
 
 El mensaje `user` no se arma concatenando strings, sino como una **lista de bloques de contenido** en el formato estándar de LiteLLM/OpenAI:
 
@@ -269,11 +279,6 @@ El mensaje `user` no se arma concatenando strings, sino como una **lista de bloq
 | `build_user_content` | Arma el mensaje `user` con el prompt y los bloques de cada adjunto, sin saber de qué camino vienen |
 | `generate_structured_from_messages` (`llm_wrapper`) | Recibe el array `messages` completo, con `content` como string o como lista de bloques |
 | `ATTACHMENT_STRATEGY` | Elige el procesador |
-
-Sumar el camino A es escribir una clase que suba el archivo a la Files API del proveedor y devuelva un bloque `file`, más una rama en `get_attachment_processor()`. El endpoint, el servicio y el wrapper no cambian. Dos temas que el camino A agrega y que hay que decidir al implementarlo:
-
-- **Ciclo de vida del archivo en el proveedor:** reutilizar el `file_id` en los turnos siguientes de la sesión y definir cuándo borrarlo (costo y privacidad).
-- **Soporte del modelo:** no todos los modelos aceptan PDF nativo; el procesador debería validarlo contra el modelo configurado.
 
 ## Estructura
 

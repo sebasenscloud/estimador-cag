@@ -110,7 +110,9 @@ class EstimationResponse(BaseModel):
 
 class AttachmentInfo(BaseModel):
     filename: str
-    strategy: str
+    strategy: str  # local_text (camino B) o multimodal (camino A)
+    tool: str  # pypdf, pymupdf, python-docx, multimodal_inline, multimodal_files_api
+    reason: str  # por qué el router eligió esa herramienta
     extracted_chars: int
     truncated: bool
     warning: str | None = None

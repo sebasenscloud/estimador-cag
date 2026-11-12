@@ -188,7 +188,12 @@ async def test_pdf_attachment_content_changes_the_estimation(client, fake_llm):
                 "attachments",
                 (
                     "requisitos.pdf",
-                    make_pdf("Requisito: cobrar las reservas con Stripe"),
+                    # Con suficiente texto, el router lo procesa por el camino B.
+                    make_pdf(
+                        "Requisito: cobrar las reservas online con Stripe, con "
+                        "reembolsos automáticos si el cliente cancela con un día "
+                        "de anticipación."
+                    ),
                 ),
             )
         ],

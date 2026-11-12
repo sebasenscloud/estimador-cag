@@ -18,8 +18,16 @@ class Settings(BaseSettings):
     prompt_version: str = "v1"
     # Sesiones: turnos (user + assistant) que conserva la ventana deslizante.
     session_max_turns: int = 6
-    # Adjuntos: "local_text" = camino B. Preparado para sumar el camino A.
-    attachment_strategy: str = "local_text"
+    # Adjuntos. ATTACHMENT_STRATEGY: auto (el router elige por documento),
+    # local_text (siempre camino B) o multimodal (PDFs siempre por el camino A).
+    attachment_strategy: str = "auto"
+    # Camino A: inline (base64 en el mensaje) o files_api (subida al proveedor).
+    attachment_multimodal_mode: str = "inline"
+    # Umbrales del router para PDFs.
+    attachment_min_chars_per_page: int = 100
+    attachment_image_heavy_per_page: float = 1.0
+    attachment_visual_max_chars_per_page: int = 800
+    attachment_large_pdf_pages: int = 30
     attachment_max_files: int = 5
     attachment_max_bytes: int = 10 * 1024 * 1024
     attachment_max_chars: int = 20_000

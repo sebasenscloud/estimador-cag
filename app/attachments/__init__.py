@@ -1,142 +1,74 @@
-"""Procesamiento de adjuntos (PDF y Word).
+"""Procesamiento de adjuntos (PDF y Word) con los dos caminos.
 
-Camino elegido: B, extracción local. El texto se extrae en el servicio IA y va
-al prompt detrás de la transcripción, con un separador claro.
+- Camino A, multimodal (`multimodal.py`): el PDF va al LLM, inline en base64 o
+  por la Files API (ATTACHMENT_MULTIMODAL_MODE).
+- Camino B, extracción local (`extractors.py`): pypdf, PyMuPDF o python-docx.
+- El router (`router.py`) decide documento por documento según
+  ATTACHMENT_STRATEGY (auto, local_text o multimodal).
 
-Para que el camino A (multimodal directo) se sume sin rehacer nada, cada
-procesador devuelve "content parts": bloques en el formato estándar de mensajes
-de LiteLLM/OpenAI, que el servicio agrega al mensaje `user` sin saber de qué
-camino vienen.
-
-- Camino B (hoy):   {"type": "text", "text": "--- attachment: x.pdf ---\n..."}
-- Camino A (futuro): {"type": "file", "file": {"file_id": "..."}}
-
-Sumar el camino A = una clase que implemente `AttachmentProcessor` y una rama en
-`get_attachment_processor()`, elegida con ATTACHMENT_STRATEGY.
+Cada adjunto se convierte en bloques de contenido (`content_parts`) en el
+formato de LiteLLM/OpenAI, y el servicio los agrega al mensaje `user` sin
+saber de qué camino vienen.
 """
 
-import io
-from dataclasses import dataclass, field
-from pathlib import PurePath
-from typing import Protocol
-
-import docx
-import pypdf
-
+from app.attachments.analysis import PdfProfile, analyze_pdf
+from app.attachments.base import (
+    SUPPORTED_EXTENSIONS,
+    Attachment,
+    AttachmentError,
+    ProcessedAttachment,
+)
+from app.attachments.router import AttachmentRouter, Decision, decide_pdf
 from app.config import settings
 
+__all__ = [
+    "Attachment",
+    "AttachmentError",
+    "AttachmentRouter",
+    "Decision",
+    "PdfProfile",
+    "ProcessedAttachment",
+    "analyze_pdf",
+    "build_user_content",
+    "decide_pdf",
+    "get_attachment_processor",
+    "validate_attachments",
+]
 
-class AttachmentError(ValueError):
-    """El adjunto no se puede procesar: formato no soportado, demasiado grande..."""
-
-
-@dataclass
-class Attachment:
-    filename: str
-    data: bytes
-
-    @property
-    def extension(self) -> str:
-        return PurePath(self.filename).suffix.lower()
-
-
-@dataclass
-class ProcessedAttachment:
-    filename: str
-    # Bloques que se agregan al mensaje `user`, en el formato de LiteLLM/OpenAI.
-    content_parts: list[dict]
-    extracted_chars: int = 0
-    truncated: bool = False
-    warnings: list[str] = field(default_factory=list)
+STRATEGIES = ("auto", "local_text", "multimodal")
+MULTIMODAL_MODES = ("inline", "files_api")
 
 
-class AttachmentProcessor(Protocol):
-    strategy: str
-    supported_extensions: frozenset[str]
-
-    def process(self, attachment: Attachment) -> ProcessedAttachment: ...
-
-
-class LocalTextExtractor:
-    """Camino B: pypdf para PDF y python-docx para Word."""
-
-    strategy = "local_text"
-    supported_extensions = frozenset({".pdf", ".docx"})
-
-    def __init__(self, max_chars: int):
-        self.max_chars = max_chars
-
-    def process(self, attachment: Attachment) -> ProcessedAttachment:
-        if attachment.extension == ".pdf":
-            text = _extract_pdf(attachment.data)
-        else:
-            text = _extract_docx(attachment.data)
-
-        text = text.strip()
-        warnings = []
-        if not text:
-            warnings.append(
-                "No se pudo extraer texto. Si es un PDF escaneado, la extracción "
-                "local no puede leerlo (el camino multimodal sí)."
-            )
-        truncated = len(text) > self.max_chars
-        if truncated:
-            text = text[: self.max_chars]
-            warnings.append(f"El texto se recortó a {self.max_chars} caracteres.")
-
-        block = f"--- attachment: {attachment.filename} ---\n{text}"
-        return ProcessedAttachment(
-            filename=attachment.filename,
-            content_parts=[{"type": "text", "text": block}],
-            extracted_chars=len(text),
-            truncated=truncated,
-            warnings=warnings,
+def get_attachment_processor() -> AttachmentRouter:
+    if settings.attachment_strategy not in STRATEGIES:
+        raise ValueError(
+            f"ATTACHMENT_STRATEGY desconocida: '{settings.attachment_strategy}'. "
+            f"Valores soportados: {', '.join(STRATEGIES)}."
         )
-
-
-def _extract_pdf(data: bytes) -> str:
-    try:
-        reader = pypdf.PdfReader(io.BytesIO(data))
-        return "\n\n".join(page.extract_text() or "" for page in reader.pages)
-    except pypdf.errors.PdfReadError as error:
-        raise AttachmentError(f"El PDF no se pudo leer: {error}") from error
-
-
-def _extract_docx(data: bytes) -> str:
-    try:
-        document = docx.Document(io.BytesIO(data))
-    except Exception as error:
-        raise AttachmentError(f"El documento Word no se pudo leer: {error}") from error
-
-    lines = [paragraph.text for paragraph in document.paragraphs]
-    for table in document.tables:
-        for row in table.rows:
-            lines.append(" | ".join(cell.text for cell in row.cells))
-    return "\n".join(lines)
-
-
-def get_attachment_processor() -> AttachmentProcessor:
-    if settings.attachment_strategy == "local_text":
-        return LocalTextExtractor(max_chars=settings.attachment_max_chars)
-    raise ValueError(
-        f"ATTACHMENT_STRATEGY desconocida: '{settings.attachment_strategy}'. "
-        "Valores soportados: local_text."
+    if settings.attachment_multimodal_mode not in MULTIMODAL_MODES:
+        raise ValueError(
+            f"ATTACHMENT_MULTIMODAL_MODE desconocido: "
+            f"'{settings.attachment_multimodal_mode}'. "
+            f"Valores soportados: {', '.join(MULTIMODAL_MODES)}."
+        )
+    return AttachmentRouter(
+        strategy=settings.attachment_strategy,
+        max_chars=settings.attachment_max_chars,
+        model=settings.llm_model,
     )
 
 
-def validate_attachments(
-    attachments: list[Attachment], processor: AttachmentProcessor
-) -> None:
+def validate_attachments(attachments: list[Attachment]) -> None:
     """Valida cantidad, tamaño y formato antes de procesar nada (política exception)."""
     if len(attachments) > settings.attachment_max_files:
         raise AttachmentError(
             f"Se aceptan como máximo {settings.attachment_max_files} adjuntos."
         )
     for attachment in attachments:
-        if attachment.extension not in processor.supported_extensions:
+        if attachment.extension not in SUPPORTED_EXTENSIONS:
             raise AttachmentError(
                 f"'{attachment.filename}': formato no soportado. Formatos aceptados: "
-                f"{', '.join(sorted(processor.supported_extensions))}."
+                f"{', '.join(sorted(SUPPORTED_EXTENSIONS))}."
             )
         if len(attachment.data) > settings.attachment_max_bytes:
             raise AttachmentError(
