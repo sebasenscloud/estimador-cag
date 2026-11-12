@@ -3,6 +3,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.sessions import ProjectMetadata
+
 # Debajo de esta confianza, el modelo tiene que declarar que no puede estimar.
 LOW_CONFIDENCE_PCT = 40
 OUT_OF_SCOPE_PREFIX = "Out of scope:"
@@ -117,6 +119,7 @@ class AttachmentInfo(BaseModel):
 class SessionEstimationResponse(BaseModel):
     session_id: str
     result: EstimationResult
+    project_metadata: ProjectMetadata
     prompt_version: str
     attachments: list[AttachmentInfo]
 

@@ -150,6 +150,41 @@ Cada sesión (`app/sessions.py`) separa:
 
 Las sesiones viven en un diccionario del proceso: se pierden al reiniciar el servicio. Es una decisión consciente para esta fase (ver el docstring de `app/sessions.py`).
 
+### `project_metadata` en el system prompt
+
+En cada turno, el system prompt (`app/prompts/estimation/v1/system.j2`) incluye un bloque con los hechos conocidos del proyecto:
+
+```
+<project_metadata>
+- Nombre del proyecto: Turnito
+- Tamaño de equipo asumido: 3 personas
+- Tecnologías mencionadas: Flutter, Stripe
+- Alcance acordado: Incluye pagos online, sin app de escritorio.
+</project_metadata>
+```
+
+En el primer turno de la sesión (o en `POST /api/v1/estimate`, sin sesión) el bloque va vacío. Solo se listan los campos que tienen valor.
+
+### Cómo se actualiza: extractor LLM (decisión)
+
+Después de cada estimación, `app/services/metadata_extractor.py` hace **una segunda llamada al LLM** con su propio prompt (`app/prompts/metadata_extraction/v1/`). Recibe la ficha actual, el contenido del turno (transcripción y adjuntos) y la estimación devuelta, y devuelve la ficha actualizada validada contra `ProjectMetadata` con Instructor.
+
+| Opción | A favor | En contra |
+|---|---|---|
+| Heurística (regex) | Gratis e instantánea | Frágil en español: "lo hacemos en Flutter", "el front va con React", "somos tres devs"... cada forma de decirlo es otra regex. No distingue un hecho de una hipótesis, ni detecta correcciones ("al final no usamos Stripe") |
+| **Extractor LLM (elegida)** | Entiende lenguaje natural y documentos adjuntos, distingue hechos de supuestos y aplica correcciones. Reutiliza Instructor, así que la salida está tipada y validada | Una llamada más por turno: más costo y más latencia |
+
+Por qué el extractor:
+
+- **La memoria es lo que hace útil una sesión:** un hecho mal extraído contamina todos los turnos siguientes. Vale más la precisión que ahorrar una llamada.
+- **Los adjuntos:** los hechos suelen estar en el PDF o el Word, en texto libre. Una regex no los encuentra con fiabilidad.
+- **Costo acotado:** el extractor recibe poco contexto y devuelve un objeto chico. Con un modelo económico como `claude-haiku-4-5`, el costo extra por turno es bajo.
+- **Política de fallo declarada (degradar):** si el extractor falla, se conserva la ficha anterior y se registra `metadata_extraction_failed`. La estimación del usuario no se pierde por un error de la memoria.
+
+La ficha la devuelve completa el modelo, no solo los cambios, para que pueda aplicar correcciones. El prompt le indica conservar los hechos existentes salvo que la interacción los cambie explícitamente, y no convertir en hechos los supuestos de la estimación.
+
+Alternativa evaluada para más adelante: pedir los hechos en la **misma** llamada de la estimación (un `response_model` con `project_facts` y `estimation`). Ahorra la segunda llamada, pero mezcla dos responsabilidades en un mismo prompt.
+
 ### Estimar con adjuntos
 
 `POST /api/v1/sessions/{session_id}/estimate` recibe `multipart/form-data`:
@@ -200,11 +235,17 @@ Limitaciones conocidas: no ve imágenes, gráficos ni el diseño del documento, 
 El mensaje `user` no se arma concatenando strings, sino como una **lista de bloques de contenido** en el formato estándar de LiteLLM/OpenAI:
 
 ```python
-{"role": "user", "content": [
-    {"type": "text", "text": "<prompt con la transcripción>"},
-    {"type": "text", "text": "--- attachment: requisitos.pdf ---\n<texto>"},  # camino B
-    {"type": "file", "file": {"file_id": "file_abc123"}},                      # camino A
-]}
+{
+    "role": "user",
+    "content": [
+        {"type": "text", "text": "<prompt con la transcripción>"},
+        {
+            "type": "text",
+            "text": "--- attachment: requisitos.pdf ---\n<texto>",
+        },  # camino B
+        {"type": "file", "file": {"file_id": "file_abc123"}},  # camino A
+    ],
+}
 ```
 
 | Pieza | Rol |

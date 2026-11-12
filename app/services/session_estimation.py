@@ -7,6 +7,7 @@
                                       a continuación los bloques de cada adjunto
 5. LLM + Instructor                → fix · retry
 6. Output guardrail                → filter
+7. Actualizar project_metadata     → extractor LLM (si falla, conserva la ficha)
 
 No usa la caché exact-match: dentro de una sesión la respuesta va a depender
 del historial y de la memoria del proyecto (pasos siguientes).
@@ -31,6 +32,7 @@ from app.schemas import (
     SessionEstimationResponse,
 )
 from app.services.llm_wrapper import generate_structured_from_messages
+from app.services.metadata_extractor import extract_project_metadata
 from app.sessions import session_store
 
 logger = structlog.get_logger()
@@ -45,16 +47,22 @@ def estimate_in_session(
     validate_attachments(attachments, processor)
     processed = [processor.process(attachment) for attachment in attachments]
 
+    # El system prompt lleva los hechos conocidos de la sesión en <project_metadata>.
     system_prompt, user_message = render_estimation_prompt(
-        request, version=settings.prompt_version
+        request,
+        version=settings.prompt_version,
+        project_metadata=session.metadata,
     )
+    user_content = build_user_content(user_message, processed)
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": build_user_content(user_message, processed)},
+        {"role": "user", "content": user_content},
     ]
 
     result = generate_structured_from_messages(messages, EstimationResult)
     result = enforce_scope_response(result)
+
+    session.metadata = extract_project_metadata(session.metadata, user_content, result)
 
     logger.info(
         "session_estimation_completed",
@@ -66,6 +74,7 @@ def estimate_in_session(
     return SessionEstimationResponse(
         session_id=session.session_id,
         result=result,
+        project_metadata=session.metadata,
         prompt_version=settings.prompt_version,
         attachments=[_info(item, processor.strategy) for item in processed],
     )

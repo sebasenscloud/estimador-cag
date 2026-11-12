@@ -19,6 +19,25 @@ Si la descripción no es un proyecto de software, está fuera del alcance de un 
 - Empezá el `summary` con "{{ out_of_scope_prefix }}" seguido del motivo y de qué información faltaría.
 - Devolvé igual una única fase de relevamiento que permita obtener esa información.
 
+## Hechos conocidos del proyecto
+
+El bloque <project_metadata> trae lo que ya se acordó en turnos anteriores de la sesión. Tenelo en cuenta y no lo contradigas salvo que el usuario lo cambie explícitamente. Si está vacío, es la primera interacción.
+
+<project_metadata>
+{% if project_metadata.project_name %}
+- Nombre del proyecto: {{ project_metadata.project_name }}
+{% endif %}
+{% if project_metadata.assumed_team_size %}
+- Tamaño de equipo asumido: {{ project_metadata.assumed_team_size }} personas
+{% endif %}
+{% if project_metadata.mentioned_technologies %}
+- Tecnologías mencionadas: {{ project_metadata.mentioned_technologies | join(", ") }}
+{% endif %}
+{% if project_metadata.agreed_scope %}
+- Alcance acordado: {{ project_metadata.agreed_scope }}
+{% endif %}
+</project_metadata>
+
 ## Nivel de detalle
 
 {% if detail_level == "summary" %}

@@ -160,6 +160,11 @@ def prompts_sent(monkeypatch, estimation_result):
     monkeypatch.setattr(
         session_estimation, "generate_structured_from_messages", fake_generate
     )
+    monkeypatch.setattr(
+        session_estimation,
+        "extract_project_metadata",
+        lambda current, turn_content, estimation: current,
+    )
     return sent
 
 

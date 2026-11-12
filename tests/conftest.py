@@ -1,6 +1,22 @@
 import pytest
 
 from app.schemas import EstimationResult
+from app.services import llm_wrapper
+
+
+@pytest.fixture(autouse=True)
+def block_real_llm_calls(monkeypatch):
+    """Red de seguridad: ningún test puede llamar al LLM real (cuesta dinero).
+
+    Si un test llega a LiteLLM sin haber simulado la llamada, falla en lugar de
+    usar la API key del .env. Usa pytest.fail (BaseException) para que ningún
+    `except Exception` del código, ni los reintentos de Instructor, lo oculten.
+    """
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Un test intentó llamar al LLM real; simulá la llamada.")
+
+    monkeypatch.setattr(llm_wrapper.litellm, "completion", forbidden)
 
 
 @pytest.fixture
