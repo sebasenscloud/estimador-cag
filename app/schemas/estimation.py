@@ -118,6 +118,7 @@ class AttachmentInfo(BaseModel):
 
 class SessionEstimationResponse(BaseModel):
     session_id: str
+    history_turns: int
     result: EstimationResult
     project_metadata: ProjectMetadata
     prompt_version: str

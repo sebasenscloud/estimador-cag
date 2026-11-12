@@ -21,12 +21,18 @@ reemplazarlo por Redis o una base de datos sin tocar a quien lo usa.
 
 import threading
 import uuid
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, Field
 
 from app.config import settings
+
+# Turnos (pares user + assistant) que conserva la ventana por defecto.
+# Se ajusta con SESSION_MAX_TURNS.
+MAX_TURNS = 6
 
 
 class ProjectMetadata(BaseModel):
@@ -41,50 +47,51 @@ class ProjectMetadata(BaseModel):
 class ConversationHistory:
     """Historial de mensajes con ventana deslizante.
 
-    Conserva como máximo `max_turns` turnos (un turno empieza con un mensaje
-    `user` y sigue con la respuesta `assistant`). Al superar el límite descarta
-    los turnos más antiguos, pero el system prompt se preserva siempre: vive en
-    su propio lugar, fuera de la ventana.
+    - Un turno es un par (user, assistant). Se guarda completo o no se guarda,
+      así nunca queda una respuesta sin su pregunta.
+    - Conserva como máximo `max_turns` pares: al superar el límite, el par más
+      antiguo se descarta (deque con maxlen).
+    - El system prompt es invariante: siempre va primero en `to_messages_list()`.
+      No se guarda en la ventana, sino que se regenera en cada llamada a partir
+      del `project_metadata` actual. Así la memoria del proyecto llega al modelo
+      aunque los turnos donde se mencionó ya hayan salido de la ventana.
     """
 
-    def __init__(self, max_turns: int, system_prompt: str = ""):
+    def __init__(self, max_turns: int = MAX_TURNS):
         if max_turns < 1:
             raise ValueError("max_turns tiene que ser al menos 1.")
         self.max_turns = max_turns
-        self.system_prompt = system_prompt
-        self._messages: list[dict] = []
+        self._turns: deque[tuple[dict, dict]] = deque(maxlen=max_turns)
 
-    def set_system_prompt(self, system_prompt: str) -> None:
-        """Reemplaza el system prompt (por ejemplo, con la metadata actualizada)."""
-        self.system_prompt = system_prompt
-
-    def add_user_message(self, content: str) -> None:
-        self._messages.append({"role": "user", "content": content})
-        self._trim()
-
-    def add_assistant_message(self, content: str) -> None:
-        self._messages.append({"role": "assistant", "content": content})
+    def add_turn(self, user_content: str, assistant_content: str) -> None:
+        self._turns.append(
+            (
+                {"role": "user", "content": user_content},
+                {"role": "assistant", "content": assistant_content},
+            )
+        )
 
     @property
     def turn_count(self) -> int:
-        return sum(1 for message in self._messages if message["role"] == "user")
+        return len(self._turns)
 
-    def messages(self) -> list[dict]:
-        """El array listo para la API: system primero y después la ventana."""
-        if not self.system_prompt:
-            return list(self._messages)
-        return [{"role": "system", "content": self.system_prompt}, *self._messages]
-
-    def _trim(self) -> None:
-        # Descarta el turno más viejo completo (su user y lo que le siguió) hasta
-        # volver al límite, así nunca queda un assistant sin su pregunta.
-        while self.turn_count > self.max_turns:
-            self._messages.pop(0)
-            while self._messages and self._messages[0]["role"] != "user":
-                self._messages.pop(0)
+    def to_messages_list(
+        self,
+        project_metadata: ProjectMetadata,
+        build_system_prompt: Callable[[ProjectMetadata], str],
+    ) -> list[dict]:
+        """El array `messages` listo para la API: el system prompt regenerado con
+        la metadata actual y, después, los pares de la ventana en orden."""
+        messages = [
+            {"role": "system", "content": build_system_prompt(project_metadata)}
+        ]
+        for user_message, assistant_message in self._turns:
+            messages.extend([user_message, assistant_message])
+        return messages
 
     def __len__(self) -> int:
-        return len(self._messages)
+        """Cantidad de mensajes en la ventana (sin contar el system prompt)."""
+        return len(self._turns) * 2
 
 
 @dataclass

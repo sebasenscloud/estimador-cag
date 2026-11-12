@@ -145,8 +145,22 @@ Guardrails de salida:
 
 Cada sesión (`app/sessions.py`) separa:
 
-- **Historial** (`ConversationHistory`): el array `messages` que viaja a la API, con ventana deslizante de `SESSION_MAX_TURNS` turnos. El system prompt se preserva siempre.
+- **Historial** (`ConversationHistory`): el array `messages` que viaja a la API, con ventana deslizante. Un turno es un par user + assistant; se conservan los últimos `MAX_TURNS = 6` (ajustable con `SESSION_MAX_TURNS`) y, al superarlo, se descarta el par más antiguo.
 - **Memoria** (`ProjectMetadata`): hechos del proyecto (nombre, tamaño de equipo, tecnologías, alcance) que se conservan aunque la ventana descarte turnos.
+
+En cada turno, `history.to_messages_list(project_metadata, build_system_prompt)` arma el array para la API:
+
+```
+[ system  ← regenerado con el project_metadata actual (invariante: siempre primero)
+  user    ┐
+  assistant┘ par más antiguo de la ventana
+  ...
+  user    ┐
+  assistant┘ par más reciente
+] + user actual (prompt + adjuntos)
+```
+
+El system prompt no se guarda en la ventana: se regenera en cada turno. Así, un hecho mencionado en el turno 1 sigue llegando al modelo en el turno 10 por el bloque `<project_metadata>`, aunque ese turno ya haya salido de la ventana. Al historial va el texto del usuario con los **nombres** de los adjuntos, no su contenido (que ya quedó destilado en la metadata), y un turno solo se guarda si se completó sin errores.
 
 Las sesiones viven en un diccionario del proceso: se pierden al reiniciar el servicio. Es una decisión consciente para esta fase (ver el docstring de `app/sessions.py`).
 
