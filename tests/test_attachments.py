@@ -9,7 +9,7 @@ from app.attachments import (
     AttachmentError,
     LocalTextExtractor,
     ProcessedAttachment,
-    apply_attachments,
+    build_user_content,
     validate_attachments,
 )
 from app.config import settings
@@ -60,14 +60,21 @@ def make_docx(paragraphs: list[str]) -> bytes:
     return output.getvalue()
 
 
-def test_extracts_text_from_pdf():
+def text_of(result: ProcessedAttachment) -> str:
+    return "".join(part["text"] for part in result.content_parts)
+
+
+def test_extracts_text_from_pdf_as_a_text_block_with_separator():
     extractor = LocalTextExtractor(max_chars=1000)
 
     result = extractor.process(
         Attachment("requisitos.pdf", make_pdf("Login con Google y pagos"))
     )
 
-    assert "Login con Google y pagos" in result.text
+    assert [part["type"] for part in result.content_parts] == ["text"]
+    assert text_of(result).startswith("--- attachment: requisitos.pdf ---\n")
+    assert "Login con Google y pagos" in text_of(result)
+    assert result.extracted_chars == len("Login con Google y pagos")
     assert result.warnings == []
 
 
@@ -77,8 +84,8 @@ def test_extracts_text_from_docx():
 
     result = extractor.process(Attachment("minuta.docx", data))
 
-    assert "Alcance: reservas online" in result.text
-    assert "Equipo: 2 desarrolladores" in result.text
+    assert "Alcance: reservas online" in text_of(result)
+    assert "Equipo: 2 desarrolladores" in text_of(result)
 
 
 def test_long_text_is_truncated_with_a_warning():
@@ -87,7 +94,7 @@ def test_long_text_is_truncated_with_a_warning():
     result = extractor.process(Attachment("largo.docx", make_docx(["x" * 50])))
 
     assert result.truncated is True
-    assert len(result.text) == 10
+    assert result.extracted_chars == 10
     assert result.warnings
 
 
@@ -96,7 +103,7 @@ def test_document_without_text_returns_a_warning():
 
     result = extractor.process(Attachment("vacio.docx", make_docx([])))
 
-    assert result.text == ""
+    assert result.extracted_chars == 0
     assert "escaneado" in result.warnings[0]
 
 
@@ -120,34 +127,44 @@ def test_too_many_attachments_are_rejected(monkeypatch):
         validate_attachments(files, LocalTextExtractor(1000))
 
 
-def test_attachments_are_concatenated_with_a_clear_separator():
-    combined = apply_attachments(
-        TRANSCRIPT,
+def test_user_content_puts_the_prompt_first_and_then_each_attachment():
+    pdf_block = {"type": "text", "text": "--- attachment: requisitos.pdf ---\nLogin"}
+    file_block = {"type": "file", "file": {"file_id": "file_123"}}
+
+    content = build_user_content(
+        "prompt del usuario",
         [
-            ProcessedAttachment("requisitos.pdf", "Login con Google"),
-            ProcessedAttachment("minuta.docx", "Pagos con Stripe"),
+            ProcessedAttachment("requisitos.pdf", [pdf_block]),
+            ProcessedAttachment("planos.pdf", [file_block]),
         ],
     )
 
-    assert combined == (
-        f"{TRANSCRIPT}\n\n"
-        "--- attachment: requisitos.pdf ---\nLogin con Google\n\n"
-        "--- attachment: minuta.docx ---\nPagos con Stripe"
-    )
+    # El armado no depende del camino: un bloque "file" (camino A) entra igual.
+    assert content == [
+        {"type": "text", "text": "prompt del usuario"},
+        pdf_block,
+        file_block,
+    ]
 
 
 @pytest.fixture
 def prompts_sent(monkeypatch, estimation_result):
+    """Guarda el `content` del mensaje user que se le manda al modelo."""
     sent = []
 
-    def fake_generate_structured(system_prompt, user_message, response_model):
-        sent.append(user_message)
+    def fake_generate(messages, response_model):
+        assert [message["role"] for message in messages] == ["system", "user"]
+        sent.append(messages[1]["content"])
         return estimation_result
 
     monkeypatch.setattr(
-        session_estimation, "generate_structured", fake_generate_structured
+        session_estimation, "generate_structured_from_messages", fake_generate
     )
     return sent
+
+
+def all_text(content: list[dict]) -> str:
+    return "\n".join(part.get("text", "") for part in content)
 
 
 def new_session_id() -> str:
@@ -173,9 +190,13 @@ def test_endpoint_accepts_transcript_and_attachments(prompts_sent):
         "requisitos.pdf",
         "minuta.docx",
     ]
-    assert "--- attachment: requisitos.pdf ---" in prompts_sent[0]
-    assert "Login con Google" in prompts_sent[0]
-    assert "Pagos con Stripe" in prompts_sent[0]
+    content = prompts_sent[0]
+    assert len(content) == 3
+    assert TRANSCRIPT in content[0]["text"]
+    assert content[1]["text"].startswith("--- attachment: requisitos.pdf ---")
+    assert "Login con Google" in content[1]["text"]
+    assert content[2]["text"].startswith("--- attachment: minuta.docx ---")
+    assert "Pagos con Stripe" in content[2]["text"]
 
 
 def test_endpoint_works_without_attachments(prompts_sent):
@@ -188,7 +209,8 @@ def test_endpoint_works_without_attachments(prompts_sent):
 
     assert response.status_code == 200
     assert response.json()["attachments"] == []
-    assert "--- attachment:" not in prompts_sent[0]
+    assert len(prompts_sent[0]) == 1
+    assert "--- attachment:" not in all_text(prompts_sent[0])
 
 
 def test_endpoint_rejects_unknown_session(prompts_sent):

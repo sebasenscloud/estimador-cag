@@ -174,10 +174,10 @@ JSON y archivos no pueden viajar en el mismo body, por eso los campos tipados ll
 
 ### Camino elegido para los adjuntos: B (extracción local)
 
-El texto se extrae en el servicio IA (`pypdf` para PDF, `python-docx` para Word) y se concatena a la transcripción con un separador:
+El texto se extrae en el servicio IA (`pypdf` para PDF, `python-docx` para Word) y va al modelo a continuación de la transcripción, cada adjunto con su separador:
 
 ```
-<transcripción>
+<prompt con la transcripción>
 
 --- attachment: requisitos.pdf ---
 <texto del PDF>
@@ -195,7 +195,30 @@ Por qué B:
 
 Limitaciones conocidas: no ve imágenes, gráficos ni el diseño del documento, y un PDF escaneado no tiene texto extraíble (la respuesta lo avisa en `attachments[].warning`).
 
-**Preparado para el camino A (multimodal directo):** todo pasa por la interfaz `AttachmentProcessor` en `app/attachments/__init__.py`, elegida con `ATTACHMENT_STRATEGY`. Sumar el camino A es agregar un procesador que suba el archivo a la Files API del proveedor y lo referencie en el bloque de contenido del mensaje, sin cambiar el endpoint.
+### Preparado para el camino A (multimodal directo)
+
+El mensaje `user` no se arma concatenando strings, sino como una **lista de bloques de contenido** en el formato estándar de LiteLLM/OpenAI:
+
+```python
+{"role": "user", "content": [
+    {"type": "text", "text": "<prompt con la transcripción>"},
+    {"type": "text", "text": "--- attachment: requisitos.pdf ---\n<texto>"},  # camino B
+    {"type": "file", "file": {"file_id": "file_abc123"}},                      # camino A
+]}
+```
+
+| Pieza | Rol |
+|---|---|
+| `AttachmentProcessor` (`app/attachments/__init__.py`) | Interfaz: recibe el archivo crudo y devuelve `content_parts` |
+| `LocalTextExtractor` | Camino B: devuelve un bloque `text` con el separador |
+| `build_user_content` | Arma el mensaje `user` con el prompt y los bloques de cada adjunto, sin saber de qué camino vienen |
+| `generate_structured_from_messages` (`llm_wrapper`) | Recibe el array `messages` completo, con `content` como string o como lista de bloques |
+| `ATTACHMENT_STRATEGY` | Elige el procesador |
+
+Sumar el camino A es escribir una clase que suba el archivo a la Files API del proveedor y devuelva un bloque `file`, más una rama en `get_attachment_processor()`. El endpoint, el servicio y el wrapper no cambian. Dos temas que el camino A agrega y que hay que decidir al implementarlo:
+
+- **Ciclo de vida del archivo en el proveedor:** reutilizar el `file_id` en los turnos siguientes de la sesión y definir cuándo borrarlo (costo y privacidad).
+- **Soporte del modelo:** no todos los modelos aceptan PDF nativo; el procesador debería validarlo contra el modelo configurado.
 
 ## Estructura
 

@@ -174,3 +174,22 @@ def test_partial_streaming_through_real_instructor(monkeypatch, estimation_resul
     assert len(partials) > 1
     final = EstimationResult.model_validate(partials[-1].model_dump(warnings=False))
     assert final == estimation_result
+
+
+def test_generate_from_messages_sends_the_array_unchanged(fake_completions):
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "turno anterior"},
+        {"role": "assistant", "content": "respuesta anterior"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": USER_MESSAGE},
+                {"type": "file", "file": {"file_id": "file_123"}},
+            ],
+        },
+    ]
+
+    llm_wrapper.generate_structured_from_messages(messages, EstimationResult)
+
+    assert fake_completions.calls[0]["messages"] == messages

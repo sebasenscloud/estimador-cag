@@ -1,13 +1,18 @@
 """Procesamiento de adjuntos (PDF y Word).
 
-Camino elegido: B, extracción local. El texto se extrae en el servicio IA y se
-concatena a la transcripción con un separador claro.
+Camino elegido: B, extracción local. El texto se extrae en el servicio IA y va
+al prompt detrás de la transcripción, con un separador claro.
 
-Para que el camino A (multimodal directo) se pueda sumar sin rehacer nada, todo
-pasa por la interfaz `AttachmentProcessor`: el endpoint y el servicio solo
-llaman a `get_attachment_processor()` y a `apply_attachments()`. Un procesador
-del camino A devolvería referencias a archivos (Files API) en lugar de texto, y
-se elegiría con ATTACHMENT_STRATEGY.
+Para que el camino A (multimodal directo) se sume sin rehacer nada, cada
+procesador devuelve "content parts": bloques en el formato estándar de mensajes
+de LiteLLM/OpenAI, que el servicio agrega al mensaje `user` sin saber de qué
+camino vienen.
+
+- Camino B (hoy):   {"type": "text", "text": "--- attachment: x.pdf ---\n..."}
+- Camino A (futuro): {"type": "file", "file": {"file_id": "..."}}
+
+Sumar el camino A = una clase que implemente `AttachmentProcessor` y una rama en
+`get_attachment_processor()`, elegida con ATTACHMENT_STRATEGY.
 """
 
 import io
@@ -38,7 +43,9 @@ class Attachment:
 @dataclass
 class ProcessedAttachment:
     filename: str
-    text: str
+    # Bloques que se agregan al mensaje `user`, en el formato de LiteLLM/OpenAI.
+    content_parts: list[dict]
+    extracted_chars: int = 0
     truncated: bool = False
     warnings: list[str] = field(default_factory=list)
 
@@ -77,9 +84,11 @@ class LocalTextExtractor:
             text = text[: self.max_chars]
             warnings.append(f"El texto se recortó a {self.max_chars} caracteres.")
 
+        block = f"--- attachment: {attachment.filename} ---\n{text}"
         return ProcessedAttachment(
             filename=attachment.filename,
-            text=text,
+            content_parts=[{"type": "text", "text": block}],
+            extracted_chars=len(text),
             truncated=truncated,
             warnings=warnings,
         )
@@ -136,9 +145,12 @@ def validate_attachments(
             )
 
 
-def apply_attachments(transcript: str, processed: list[ProcessedAttachment]) -> str:
-    """Camino B: concatena el texto de cada adjunto a la transcripción."""
-    sections = [transcript.strip()]
+def build_user_content(
+    user_message: str, processed: list[ProcessedAttachment]
+) -> list[dict]:
+    """Arma el `content` del mensaje user: el texto del prompt y, a continuación,
+    los bloques de cada adjunto. No depende del camino que los generó."""
+    content = [{"type": "text", "text": user_message}]
     for item in processed:
-        sections.append(f"--- attachment: {item.filename} ---\n{item.text}")
-    return "\n\n".join(sections)
+        content.extend(item.content_parts)
+    return content

@@ -2,8 +2,9 @@
 
 1. Recuperar la sesión            → SessionNotFoundError si no existe
 2. Validar y procesar adjuntos     → AttachmentError (política exception)
-3. Concatenar texto a la transcripción con "--- attachment: nombre ---"
-4. Render del prompt               → mismas plantillas que la estimación simple
+3. Render del prompt               → mismas plantillas que la estimación simple
+4. Armar messages                  → el user es una lista de bloques: el prompt y
+                                      a continuación los bloques de cada adjunto
 5. LLM + Instructor                → fix · retry
 6. Output guardrail                → filter
 
@@ -16,7 +17,7 @@ import structlog
 from app.attachments import (
     Attachment,
     ProcessedAttachment,
-    apply_attachments,
+    build_user_content,
     get_attachment_processor,
     validate_attachments,
 )
@@ -29,7 +30,7 @@ from app.schemas import (
     EstimationResult,
     SessionEstimationResponse,
 )
-from app.services.llm_wrapper import generate_structured
+from app.services.llm_wrapper import generate_structured_from_messages
 from app.sessions import session_store
 
 logger = structlog.get_logger()
@@ -44,22 +45,22 @@ def estimate_in_session(
     validate_attachments(attachments, processor)
     processed = [processor.process(attachment) for attachment in attachments]
 
-    # El límite de 2000 caracteres aplica a lo que escribe el usuario (ya
-    # validado); el texto de los adjuntos se suma después, para el prompt.
-    full_transcript = apply_attachments(request.description, processed)
-    prompt_request = request.model_copy(update={"description": full_transcript})
     system_prompt, user_message = render_estimation_prompt(
-        prompt_request, version=settings.prompt_version
+        request, version=settings.prompt_version
     )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": build_user_content(user_message, processed)},
+    ]
 
-    result = generate_structured(system_prompt, user_message, EstimationResult)
+    result = generate_structured_from_messages(messages, EstimationResult)
     result = enforce_scope_response(result)
 
     logger.info(
         "session_estimation_completed",
         session_id=session.session_id,
         attachments=len(processed),
-        attachment_chars=sum(len(item.text) for item in processed),
+        attachment_chars=sum(item.extracted_chars for item in processed),
         out_of_scope=result.is_out_of_scope,
     )
     return SessionEstimationResponse(
@@ -74,7 +75,7 @@ def _info(item: ProcessedAttachment, strategy: str) -> AttachmentInfo:
     return AttachmentInfo(
         filename=item.filename,
         strategy=strategy,
-        extracted_chars=len(item.text),
+        extracted_chars=item.extracted_chars,
         truncated=item.truncated,
         warning=" ".join(item.warnings) or None,
     )

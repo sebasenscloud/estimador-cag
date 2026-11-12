@@ -73,7 +73,21 @@ def _messages(system_prompt: str, user_message: str) -> list[dict]:
 def generate_structured(
     system_prompt: str, user_message: str, response_model: type[ResponseModel]
 ) -> ResponseModel:
+    """Atajo para un solo turno: system + user como texto."""
+    return generate_structured_from_messages(
+        _messages(system_prompt, user_message), response_model
+    )
+
+
+def generate_structured_from_messages(
+    messages: list[dict], response_model: type[ResponseModel]
+) -> ResponseModel:
     """Pide al modelo una respuesta que cumpla `response_model`.
+
+    Recibe el array `messages` completo, en el formato de LiteLLM/OpenAI. El
+    `content` de un mensaje puede ser un string o una lista de bloques
+    ({"type": "text"}, {"type": "file"}, ...): así sirve para adjuntos de
+    cualquier camino y para el historial de una sesión.
 
     Política FIX · RETRY: si la respuesta no pasa la validación de Pydantic,
     Instructor le reenvía el error al modelo hasta `LLM_MAX_RETRIES` veces.
@@ -83,7 +97,7 @@ def generate_structured(
     try:
         result, completion = get_client().chat.completions.create_with_completion(
             model=model,
-            messages=_messages(system_prompt, user_message),
+            messages=messages,
             response_model=response_model,
             max_retries=settings.llm_max_retries,
             max_tokens=settings.max_tokens,
@@ -94,7 +108,7 @@ def generate_structured(
         if isinstance(error.__cause__, openai.APIError):
             raise LLMProviderError(str(error.__cause__)) from error
         raise InvalidLLMOutputError(
-            f"El modelo no devolvió una estimación válida tras "
+            f"El modelo no devolvió una respuesta válida tras "
             f"{error.n_attempts} intentos: {error}"
         ) from error
     except openai.APIError as error:
