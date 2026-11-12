@@ -20,6 +20,7 @@ Navegador → Streamlit (formulario) → POST /api/v1/estimate → FastAPI → I
 - **Contrato tipado con Pydantic v2** (`app/schemas/estimation.py`): request, response y el resultado estructurado (`EstimationResult`), con enums y validaciones. El cliente reutiliza las mismas clases.
 - **Salida estructurada con Instructor + LiteLLM:** el LLM devuelve JSON que cumple `EstimationResult`. Si no lo cumple, Instructor le reenvía el error al modelo y reintenta.
 - **Una sola interfaz para todos los proveedores:** cambiar de `openai/gpt-4o-mini` a `anthropic/claude-haiku-4-5` es una línea en `.env`.
+- **Streaming parcial con Instructor** (`POST /api/v1/estimate/stream`): el `EstimationResult` llega campo por campo y la UI muestra las fases a medida que se generan; el resultado final se valida igual que sin streaming.
 - **Guardrails de salida** con políticas declaradas: *fix · retry* (Instructor reintenta) y *filter* (respuesta degradada "Out of scope").
 - **Caching exact-match:** una solicitud idéntica (mismo modelo, versión de prompt, tipo, nivel de detalle y descripción) sale de una caché en memoria (LRU) sin llamar al LLM. La respuesta lo indica con `cached`.
 - **Observabilidad con structlog:** se registra cada llamada al LLM (modelo, versión del prompt, opciones elegidas, tokens, duración, acierto de caché, errores) y cada request HTTP de la API.
@@ -115,6 +116,21 @@ Errores:
 | 4. LLM + Instructor | `role: "system"` y `role: "user"` separados, exigiendo `EstimationResult` | **fix · retry**: si Pydantic rechaza la respuesta, el modelo la corrige |
 | 5. Output guardrail | `enforce_scope_response` (`app/guardrails/output.py`) | **filter**: degrada a `"Out of scope: ..."` |
 | 6. Cache write | Guarda el resultado | **solo si es válido** |
+
+### Streaming parcial
+
+`POST /api/v1/estimate/stream` recibe el mismo `EstimationRequest` y responde **NDJSON** (`application/x-ndjson`): una línea JSON por evento, con la forma de `EstimationStreamEvent`.
+
+```
+{"type": "partial", "partial": {"summary": "SaaS B2B...", "phases": [{"name": "Discovery"}], "total_cost_eur": null, ...}}
+{"type": "partial", "partial": {"summary": "SaaS B2B de reservas...", "phases": [{"name": "Discovery", "duration_weeks": 4}, ...]}}
+{"type": "final",   "response": {"result": {...}, "prompt_version": "v1", "cached": false}}
+```
+
+- **partial:** Instructor (`create_partial`) entrega el objeto a medio completar. Mientras el JSON está incompleto **no se valida**; los campos que faltan llegan en `null`.
+- **final:** el último parcial se valida contra `EstimationResult` completo (tipos, rangos y `model_validator`). Si no pasa, el servicio cae al camino **fix · retry** sin streaming, y después aplica el output guardrail y la caché como siempre.
+- **error:** como el `200` se envía al empezar el stream, un error posterior llega como `{"type": "error", "detail": "..."}`.
+- Un acierto de caché se entrega directamente como un único evento `final`.
 
 Guardrails de salida:
 
@@ -231,7 +247,8 @@ uv run streamlit run streamlit_app.py
 Se abre en el navegador en http://localhost:8501.
 
 - Escribí la descripción del proyecto, elegí el tipo, el nivel de detalle y el formato, y tocá **Estimar**.
-- Arriba se muestran la duración total, el costo total y la confianza; debajo, las fases como tabla, lista o narrativa según el formato elegido.
+- Mientras el modelo genera, se ven el resumen y las fases a medida que llegan (streaming parcial). Al terminar, se muestran la duración total, el costo total y la confianza, y debajo las fases como tabla, lista o narrativa según el formato elegido.
+- Si el pedido queda fuera de scope, se muestra un aviso con el motivo en lugar de los números.
 - El panel lateral muestra la versión del prompt, el tiempo, si la respuesta salió de la caché y el JSON enviado al servicio.
 
 ### Llamar al servicio directamente

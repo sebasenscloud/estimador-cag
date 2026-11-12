@@ -93,3 +93,62 @@ def test_failures_are_not_cached(monkeypatch):
     with pytest.raises(InvalidLLMOutputError):
         estimation.estimate(REQUEST)
     assert len(estimation.cache) == 0
+
+
+@pytest.fixture
+def stream_calls(monkeypatch, estimation_result):
+    calls = []
+    data = estimation_result.model_dump()
+
+    def fake_stream_structured(system_prompt, user_message, response_model):
+        calls.append(response_model)
+        yield EstimationResult.model_construct(summary=data["summary"], phases=[])
+        yield EstimationResult.model_construct(**data)
+
+    monkeypatch.setattr(estimation, "stream_structured", fake_stream_structured)
+    estimation.cache.clear()
+    yield calls
+    estimation.cache.clear()
+
+
+def test_stream_emits_partials_then_a_validated_final(stream_calls, estimation_result):
+    events = list(estimation.stream_estimate(REQUEST))
+
+    assert [event.type for event in events] == ["partial", "partial", "final"]
+    assert events[0].partial["summary"] == estimation_result.summary
+    assert events[-1].response.result == estimation_result
+    assert events[-1].response.cached is False
+
+
+def test_stream_uses_cache_on_second_call(stream_calls):
+    list(estimation.stream_estimate(REQUEST))
+    events = list(estimation.stream_estimate(REQUEST))
+
+    assert [event.type for event in events] == ["final"]
+    assert events[0].response.cached is True
+    assert len(stream_calls) == 1
+
+
+def test_stream_falls_back_to_retry_when_final_partial_is_invalid(
+    monkeypatch, estimation_result
+):
+    broken = estimation_result.model_dump() | {"total_cost_eur": 1}
+
+    def fake_stream_structured(system_prompt, user_message, response_model):
+        yield EstimationResult.model_construct(**broken)
+
+    fallback_calls = []
+
+    def fake_generate_structured(system_prompt, user_message, response_model):
+        fallback_calls.append(response_model)
+        return estimation_result
+
+    monkeypatch.setattr(estimation, "stream_structured", fake_stream_structured)
+    monkeypatch.setattr(estimation, "generate_structured", fake_generate_structured)
+    estimation.cache.clear()
+
+    events = list(estimation.stream_estimate(REQUEST))
+
+    assert fallback_calls == [EstimationResult]
+    assert events[-1].response.result == estimation_result
+    estimation.cache.clear()

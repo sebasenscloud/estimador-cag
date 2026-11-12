@@ -1,4 +1,5 @@
 import time
+from collections.abc import Iterator
 from functools import lru_cache
 from typing import TypeVar
 
@@ -7,7 +8,7 @@ import litellm
 import openai
 import structlog
 from instructor.core.exceptions import InstructorRetryException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.config import settings
 
@@ -96,6 +97,46 @@ def generate_structured(
         duration_ms=round((time.perf_counter() - start) * 1000),
     )
     return result
+
+
+def stream_structured(
+    system_prompt: str, user_message: str, response_model: type[ResponseModel]
+) -> Iterator[BaseModel]:
+    """Streaming parcial: entrega el objeto a medida que el modelo lo completa.
+
+    Cada elemento es una versión parcial de `response_model` (campos aún sin
+    generar en None). Mientras el JSON está incompleto no se valida; cuando se
+    completa, Instructor lo valida contra `response_model`.
+    """
+    start = time.perf_counter()
+    model = settings.llm_model
+    try:
+        yield from get_client().chat.completions.create_partial(
+            model=model,
+            messages=_messages(system_prompt, user_message),
+            response_model=response_model,
+            max_retries=settings.llm_max_retries,
+            max_tokens=settings.max_tokens,
+            api_key=_api_key(model),
+        )
+    except InstructorRetryException as error:
+        _log_failed(model, error)
+        if isinstance(error.__cause__, openai.APIError):
+            raise LLMProviderError(str(error.__cause__)) from error
+        raise InvalidLLMOutputError(str(error)) from error
+    except ValidationError as error:
+        _log_failed(model, error)
+        raise InvalidLLMOutputError(str(error)) from error
+    except openai.APIError as error:
+        _log_failed(model, error)
+        raise LLMProviderError(str(error)) from error
+
+    logger.info(
+        "llm_stream_completed",
+        model=model,
+        prompt_version=settings.prompt_version,
+        duration_ms=round((time.perf_counter() - start) * 1000),
+    )
 
 
 def _log_failed(model: str, error: Exception) -> None:

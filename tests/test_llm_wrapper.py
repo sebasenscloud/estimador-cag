@@ -89,3 +89,27 @@ def test_api_errors_raise_provider_error(fake_completions):
 
     with pytest.raises(llm_wrapper.LLMProviderError):
         generate()
+
+
+def test_stream_structured_yields_instructor_partials(monkeypatch):
+    calls = []
+
+    def create_partial(**kwargs):
+        calls.append(kwargs)
+        yield "parcial 1"
+        yield "parcial 2"
+
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create_partial=create_partial))
+    )
+    monkeypatch.setattr(llm_wrapper, "get_client", lambda: client)
+    monkeypatch.setattr(settings, "llm_model", "anthropic/claude-haiku-4-5")
+    monkeypatch.setattr(settings, "anthropic_api_key", "fake-key")
+
+    pieces = list(
+        llm_wrapper.stream_structured(SYSTEM_PROMPT, USER_MESSAGE, EstimationResult)
+    )
+
+    assert pieces == ["parcial 1", "parcial 2"]
+    assert calls[0]["response_model"] is EstimationResult
+    assert calls[0]["messages"][0]["role"] == "system"

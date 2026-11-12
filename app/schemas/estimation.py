@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -103,6 +104,20 @@ class EstimationResponse(BaseModel):
     result: EstimationResult
     prompt_version: str
     cached: bool
+
+
+class EstimationStreamEvent(BaseModel):
+    """Una línea del stream NDJSON de POST /api/v1/estimate/stream.
+
+    - partial: `partial` trae el EstimationResult a medio generar (sin validar).
+    - final:   `response` trae la respuesta completa y validada.
+    - error:   `detail` explica qué falló (el stream ya empezó, no hay status HTTP).
+    """
+
+    type: Literal["partial", "final", "error"]
+    partial: dict[str, Any] | None = None
+    response: EstimationResponse | None = None
+    detail: str | None = None
 
 
 # Nombres legibles para mostrar en el formulario y usar en el prompt.

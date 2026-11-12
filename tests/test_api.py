@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.main import app
 from app.prompts.loader import render_estimation_prompt
-from app.schemas import EstimationRequest, EstimationResult
+from app.schemas import EstimationRequest, EstimationResult, EstimationStreamEvent
 from app.services import estimation
 from app.services.llm_wrapper import InvalidLLMOutputError, LLMProviderError
 
@@ -121,3 +121,40 @@ def test_provider_error_returns_502(monkeypatch):
     response = client.post("/api/v1/estimate", json=VALID_REQUEST)
 
     assert response.status_code == 502
+
+
+def test_stream_endpoint_returns_ndjson_events(monkeypatch, estimation_result):
+    def fake_stream_structured(system_prompt, user_message, response_model):
+        yield EstimationResult.model_construct(summary="SaaS", phases=[])
+        yield EstimationResult.model_construct(**estimation_result.model_dump())
+
+    monkeypatch.setattr(estimation, "stream_structured", fake_stream_structured)
+    estimation.cache.clear()
+
+    response = client.post("/api/v1/estimate/stream", json=VALID_REQUEST)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    events = [
+        EstimationStreamEvent.model_validate_json(line)
+        for line in response.text.splitlines()
+    ]
+    assert [event.type for event in events] == ["partial", "partial", "final"]
+    assert events[-1].response.result == estimation_result
+    estimation.cache.clear()
+
+
+def test_stream_endpoint_reports_errors_as_events(monkeypatch):
+    def failing_stream(system_prompt, user_message, response_model):
+        raise LLMProviderError("API key inválida")
+        yield
+
+    monkeypatch.setattr(estimation, "stream_structured", failing_stream)
+    estimation.cache.clear()
+
+    response = client.post("/api/v1/estimate/stream", json=VALID_REQUEST)
+
+    assert response.status_code == 200
+    event = EstimationStreamEvent.model_validate_json(response.text.splitlines()[-1])
+    assert event.type == "error"
+    assert "proveedor" in event.detail

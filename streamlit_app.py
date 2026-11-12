@@ -1,4 +1,5 @@
 import time
+from collections.abc import Callable
 
 import httpx
 import streamlit as st
@@ -13,22 +14,46 @@ from app.schemas import (
     EstimationRequest,
     EstimationResponse,
     EstimationResult,
+    EstimationStreamEvent,
     OutputFormat,
     ProjectType,
 )
 
-ESTIMATE_URL = f"{settings.estimator_api_url}/api/v1/estimate"
+ESTIMATE_URL = f"{settings.estimator_api_url}/api/v1/estimate/stream"
 
 
-def request_estimation(request: EstimationRequest) -> EstimationResponse:
-    """Envía el formulario al servicio IA y devuelve su respuesta tipada."""
-    response = httpx.post(
+class EstimationStreamError(Exception):
+    """El servicio IA informó un error a mitad del stream."""
+
+
+def stream_estimation(
+    request: EstimationRequest, on_partial: Callable[[dict], None]
+) -> EstimationResponse:
+    """Envía el formulario y lee el stream NDJSON del servicio IA.
+
+    Llama a `on_partial` con cada resultado parcial y devuelve la respuesta
+    final, ya validada con la misma clase Pydantic que usa el servicio.
+    """
+    with httpx.stream(
+        "POST",
         ESTIMATE_URL,
         json=request.model_dump(mode="json"),
         timeout=settings.estimator_api_timeout,
-    )
-    response.raise_for_status()
-    return EstimationResponse.model_validate(response.json())
+    ) as response:
+        if response.status_code >= 400:
+            response.read()
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if not line.strip():
+                continue
+            event = EstimationStreamEvent.model_validate_json(line)
+            if event.type == "partial":
+                on_partial(event.partial)
+            elif event.type == "final":
+                return event.response
+            else:
+                raise EstimationStreamError(event.detail)
+    raise EstimationStreamError("El stream terminó sin una respuesta final.")
 
 
 def error_detail(response: httpx.Response) -> str:
@@ -43,6 +68,31 @@ def error_detail(response: httpx.Response) -> str:
 
 def euros(amount: int) -> str:
     return f"{amount:,} €".replace(",", ".")
+
+
+def render_partial(partial: dict) -> None:
+    """Muestra lo que el modelo lleva generado mientras llega el stream."""
+    st.caption("Generando estimación…")
+    if partial.get("summary"):
+        st.write(partial["summary"])
+    phases = [phase for phase in partial.get("phases") or [] if phase.get("name")]
+    if phases:
+        st.dataframe(
+            [
+                {
+                    "Fase": phase.get("name"),
+                    "Semanas": phase.get("duration_weeks"),
+                    "Costo": euros(phase["cost_eur"])
+                    if phase.get("cost_eur") is not None
+                    else None,
+                    "Confianza": f"{phase['confidence_pct']} %"
+                    if phase.get("confidence_pct") is not None
+                    else None,
+                }
+                for phase in phases
+            ],
+            hide_index=True,
+        )
 
 
 def render_estimation(result: EstimationResult, output_format: OutputFormat) -> None:
@@ -141,9 +191,16 @@ if submitted:
         st.warning("La descripción tiene que tener entre 20 y 2000 caracteres.")
     else:
         start_time = time.perf_counter()
+        progress = st.empty()
+
+        def show_partial(partial: dict) -> None:
+            with progress.container():
+                render_partial(partial)
+
         try:
-            with st.spinner("Generando estimación..."):
-                result = request_estimation(request)
+            result = stream_estimation(request, on_partial=show_partial)
+        except EstimationStreamError as error:
+            st.error(f"El servicio IA no pudo completar la estimación: {error}")
         except httpx.ConnectError:
             st.error(
                 "No se pudo conectar con el servicio IA en "
@@ -163,6 +220,9 @@ if submitted:
                 "response": result,
                 "elapsed_seconds": time.perf_counter() - start_time,
             }
+        finally:
+            # La vista parcial se reemplaza por el resultado final o por el error.
+            progress.empty()
 
 last_result = st.session_state.last_result
 

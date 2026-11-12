@@ -1,7 +1,10 @@
+from collections.abc import Iterator
+
 import structlog
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
-from app.schemas import EstimationRequest, EstimationResponse
+from app.schemas import EstimationRequest, EstimationResponse, EstimationStreamEvent
 from app.services import estimation
 from app.services.llm_wrapper import InvalidLLMOutputError, LLMProviderError
 
@@ -25,3 +28,33 @@ def estimate(request: EstimationRequest) -> EstimationResponse:
                 status_code=502,
                 detail="Error al comunicarse con el proveedor de LLM.",
             )
+
+
+@router.post("/estimate/stream")
+def estimate_stream(request: EstimationRequest) -> StreamingResponse:
+    """Mismo caso de uso, entregado como NDJSON: una línea JSON por evento.
+
+    Como el status 200 se envía al empezar el stream, los errores posteriores
+    llegan como un evento `{"type": "error"}` en lugar de un código HTTP.
+    """
+    log_context = {
+        "project_type": request.project_type.value,
+        "detail_level": request.detail_level.value,
+        "output_format": request.output_format.value,
+    }
+
+    def ndjson() -> Iterator[str]:
+        with structlog.contextvars.bound_contextvars(**log_context):
+            try:
+                for event in estimation.stream_estimate(request):
+                    yield event.model_dump_json() + "\n"
+            except InvalidLLMOutputError as error:
+                yield _error_line(str(error))
+            except LLMProviderError:
+                yield _error_line("Error al comunicarse con el proveedor de LLM.")
+
+    return StreamingResponse(ndjson(), media_type="application/x-ndjson")
+
+
+def _error_line(detail: str) -> str:
+    return EstimationStreamEvent(type="error", detail=detail).model_dump_json() + "\n"

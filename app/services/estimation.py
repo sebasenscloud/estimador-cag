@@ -8,16 +8,27 @@ Orquesta el pipeline y declara la política de cada paso:
 4. LLM + Instructor  → fix · retry
 5. Output guardrail  → filter
 6. Cache write       → solo si es válido
+
+`stream_estimate` recorre los mismos pasos, pero en el 4 entrega el resultado
+parcial a medida que el modelo lo genera.
 """
 
+from collections.abc import Iterator
+
 import structlog
+from pydantic import ValidationError
 
 from app.cache.exact import ExactMatchCache
 from app.config import settings
 from app.guardrails.output import enforce_scope_response
 from app.prompts.loader import render_estimation_prompt
-from app.schemas import EstimationRequest, EstimationResponse, EstimationResult
-from app.services.llm_wrapper import generate_structured
+from app.schemas import (
+    EstimationRequest,
+    EstimationResponse,
+    EstimationResult,
+    EstimationStreamEvent,
+)
+from app.services.llm_wrapper import generate_structured, stream_structured
 
 logger = structlog.get_logger()
 
@@ -60,6 +71,56 @@ def estimate(request: EstimationRequest) -> EstimationResponse:
         "estimation_completed", cache_hit=False, out_of_scope=result.is_out_of_scope
     )
     return _response(result, cached=False)
+
+
+def stream_estimate(request: EstimationRequest) -> Iterator[EstimationStreamEvent]:
+    # 2. Cache lookup: un acierto se entrega directo como evento final
+    key = cache_key(request)
+    cached = cache.get(key)
+    if cached is not None:
+        logger.info("estimation_completed", cache_hit=True, streaming=True)
+        yield _final_event(cached, cached=True)
+        return
+
+    # 3. Render prompt
+    system_prompt, user_message = render_estimation_prompt(
+        request, version=settings.prompt_version
+    )
+
+    # 4. LLM + Instructor en streaming parcial
+    last_partial = None
+    for partial in stream_structured(system_prompt, user_message, EstimationResult):
+        last_partial = partial
+        yield EstimationStreamEvent(
+            type="partial", partial=partial.model_dump(mode="json", warnings=False)
+        )
+
+    # El parcial final se valida contra el schema completo. Si no pasa (por ejemplo,
+    # los totales no cierran), se cae al camino fix · retry sin streaming.
+    try:
+        result = EstimationResult.model_validate(
+            last_partial.model_dump(warnings=False) if last_partial else {}
+        )
+    except ValidationError:
+        logger.warning("stream_result_invalid", fallback="generate_structured")
+        result = generate_structured(system_prompt, user_message, EstimationResult)
+
+    # 5. Output guardrail (filter)
+    result = enforce_scope_response(result)
+
+    # 6. Cache write
+    cache.set(key, result)
+    logger.info(
+        "estimation_completed",
+        cache_hit=False,
+        streaming=True,
+        out_of_scope=result.is_out_of_scope,
+    )
+    yield _final_event(result, cached=False)
+
+
+def _final_event(result: EstimationResult, cached: bool) -> EstimationStreamEvent:
+    return EstimationStreamEvent(type="final", response=_response(result, cached))
 
 
 def _response(result: EstimationResult, cached: bool) -> EstimationResponse:
