@@ -124,3 +124,22 @@ def test_deleted_session_is_no_longer_found():
         store.get(session.session_id)
     assert len(store) == 0
 
+
+def test_post_sessions_returns_a_new_uuid4_session_id():
+    import uuid
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.sessions import session_store
+
+    client = TestClient(app)
+    first = client.post("/api/v1/sessions")
+    second = client.post("/api/v1/sessions")
+
+    assert first.status_code == 201
+    session_id = first.json()["session_id"]
+    assert first.json() == {"session_id": session_id}
+    assert uuid.UUID(session_id).version == 4
+    assert session_id != second.json()["session_id"]
+    assert session_store.get(session_id).history.turn_count == 0
