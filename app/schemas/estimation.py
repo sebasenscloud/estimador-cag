@@ -2,6 +2,10 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, model_validator
 
+# Debajo de esta confianza, el modelo tiene que declarar que no puede estimar.
+LOW_CONFIDENCE_PCT = 40
+OUT_OF_SCOPE_PREFIX = "Out of scope:"
+
 
 class ProjectType(str, Enum):
     MOBILE_APP = "mobile_app"
@@ -77,6 +81,22 @@ class EstimationResult(BaseModel):
                 f"pero la suma de las fases da {cost}."
             )
         return self
+
+    @model_validator(mode="after")
+    def low_confidence_requires_out_of_scope(self) -> "EstimationResult":
+        # Guardrail FIX · RETRY: si el error salta, Instructor se lo reenvía al
+        # modelo para que declare explícitamente que no puede estimar.
+        if self.confidence_pct < LOW_CONFIDENCE_PCT and not self.is_out_of_scope:
+            raise ValueError(
+                f"confidence_pct es {self.confidence_pct}, menor a "
+                f"{LOW_CONFIDENCE_PCT}. Con confianza tan baja, summary tiene que "
+                f"empezar con '{OUT_OF_SCOPE_PREFIX}' y explicar el motivo."
+            )
+        return self
+
+    @property
+    def is_out_of_scope(self) -> bool:
+        return self.summary.startswith(OUT_OF_SCOPE_PREFIX)
 
 
 class EstimationResponse(BaseModel):

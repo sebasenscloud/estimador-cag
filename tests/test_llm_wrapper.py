@@ -7,7 +7,7 @@ from instructor.core.exceptions import InstructorRetryException
 
 from app.config import settings
 from app.schemas import EstimationResult
-from app.services import llm_service
+from app.services import llm_wrapper
 
 SYSTEM_PROMPT = "Sos un estimador experto de proyectos de software."
 USER_MESSAGE = "<descripcion>App de turnos con login y calendario.</descripcion>"
@@ -31,16 +31,14 @@ class FakeCompletions:
 def fake_completions(monkeypatch, estimation_result):
     completions = FakeCompletions(result=estimation_result)
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
-    monkeypatch.setattr(llm_service, "get_client", lambda: client)
+    monkeypatch.setattr(llm_wrapper, "get_client", lambda: client)
     monkeypatch.setattr(settings, "llm_model", "anthropic/claude-haiku-4-5")
     monkeypatch.setattr(settings, "anthropic_api_key", "fake-key")
-    llm_service.cache.clear()
-    yield completions
-    llm_service.cache.clear()
+    return completions
 
 
 def generate():
-    return llm_service.generate_structured(
+    return llm_wrapper.generate_structured(
         SYSTEM_PROMPT, USER_MESSAGE, EstimationResult
     )
 
@@ -64,34 +62,14 @@ def test_asks_instructor_for_the_response_model_with_retries(fake_completions):
     assert call["api_key"] == "fake-key"
 
 
-def test_returns_validated_result_not_cached(fake_completions, estimation_result):
-    result, cached = generate()
-
-    assert result == estimation_result
-    assert cached is False
-
-
-def test_second_identical_call_comes_from_cache(fake_completions):
-    generate()
-    _, cached = generate()
-
-    assert cached is True
-    assert len(fake_completions.calls) == 1
-
-
-def test_different_prompt_is_not_cached(fake_completions):
-    generate()
-    llm_service.generate_structured(
-        SYSTEM_PROMPT, USER_MESSAGE + " Con pagos.", EstimationResult
-    )
-
-    assert len(fake_completions.calls) == 2
+def test_returns_the_validated_result(fake_completions, estimation_result):
+    assert generate() == estimation_result
 
 
 def test_missing_api_key_raises_provider_error(fake_completions, monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", None)
 
-    with pytest.raises(llm_service.LLMProviderError, match="anthropic"):
+    with pytest.raises(llm_wrapper.LLMProviderError, match="anthropic"):
         generate()
 
 
@@ -100,9 +78,8 @@ def test_exhausted_retries_raise_invalid_output_error(fake_completions):
         "total_cost_eur no coincide", n_attempts=3, total_usage=0
     )
 
-    with pytest.raises(llm_service.InvalidLLMOutputError, match="3 intentos"):
+    with pytest.raises(llm_wrapper.InvalidLLMOutputError, match="3 intentos"):
         generate()
-    assert len(llm_service.cache) == 0
 
 
 def test_api_errors_raise_provider_error(fake_completions):
@@ -110,5 +87,5 @@ def test_api_errors_raise_provider_error(fake_completions):
         request=httpx.Request("POST", "https://api.example.com")
     )
 
-    with pytest.raises(llm_service.LLMProviderError):
+    with pytest.raises(llm_wrapper.LLMProviderError):
         generate()

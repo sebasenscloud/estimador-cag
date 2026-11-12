@@ -141,3 +141,22 @@ def test_unreachable_service_is_shown(monkeypatch):
     app.button[0].click().run(timeout=30)
 
     assert "No se pudo conectar" in app.error[0].value
+
+
+def test_out_of_scope_result_shows_a_warning(monkeypatch, estimation_result):
+    degraded = estimation_result.model_copy(
+        update={"summary": "Out of scope: no es un proyecto de software."}
+    )
+    payload = {
+        "result": degraded.model_dump(),
+        "prompt_version": "v1",
+        "cached": False,
+    }
+    monkeypatch.setattr(
+        httpx, "post", lambda url, json, timeout: FakeResponse(200, payload)
+    )
+
+    app = submit(run_app(), output_format_index=0)
+
+    assert "Out of scope" in app.warning[0].value
+    assert not app.dataframe

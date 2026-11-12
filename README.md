@@ -20,7 +20,8 @@ Navegador → Streamlit (formulario) → POST /api/v1/estimate → FastAPI → I
 - **Contrato tipado con Pydantic v2** (`app/schemas/estimation.py`): request, response y el resultado estructurado (`EstimationResult`), con enums y validaciones. El cliente reutiliza las mismas clases.
 - **Salida estructurada con Instructor + LiteLLM:** el LLM devuelve JSON que cumple `EstimationResult`. Si no lo cumple, Instructor le reenvía el error al modelo y reintenta.
 - **Una sola interfaz para todos los proveedores:** cambiar de `openai/gpt-4o-mini` a `anthropic/claude-haiku-4-5` es una línea en `.env`.
-- **Caching exact-match:** una solicitud idéntica (mismo modelo, schema y prompts) sale de una caché en memoria (LRU) sin llamar al LLM. La respuesta lo indica con `cached`.
+- **Guardrails de salida** con políticas declaradas: *fix · retry* (Instructor reintenta) y *filter* (respuesta degradada "Out of scope").
+- **Caching exact-match:** una solicitud idéntica (mismo modelo, versión de prompt, tipo, nivel de detalle y descripción) sale de una caché en memoria (LRU) sin llamar al LLM. La respuesta lo indica con `cached`.
 - **Observabilidad con structlog:** se registra cada llamada al LLM (modelo, versión del prompt, opciones elegidas, tokens, duración, acierto de caché, errores) y cada request HTTP de la API.
 - **Prompts versionados con Jinja2** (`app/prompts/`): el system y el user prompt viven en plantillas `.j2`. La versión activa se elige con `PROMPT_VERSION`.
 
@@ -102,14 +103,23 @@ Errores:
 - **422:** el request no cumple el contrato.
 - **502:** el proveedor falló (red, API key, límites) o el modelo no devolvió un resultado válido después de los reintentos.
 
-### Flujo del endpoint
+### Pipeline y políticas de fallo
 
-`POST /api/v1/estimate` (`app/routers/estimations.py`):
+`POST /api/v1/estimate`: el router (`app/routers/estimations.py`) solo valida el body, delega en el caso de uso y traduce errores a HTTP. El flujo vive en `app/services/estimation.py`, y **cada paso declara qué pasa cuando falla**:
 
-1. Recibe el body validado como `EstimationRequest`.
-2. Llama a `render_estimation_prompt(request)` y obtiene `(system, user)`.
-3. Llama al modelo con `role: "system"` y `role: "user"` separados, a través de Instructor + LiteLLM, exigiendo `EstimationResult`.
-4. Devuelve un `EstimationResponse` con el resultado, la `prompt_version` y `cached`.
+| Paso | Qué hace | Política |
+|---|---|---|
+| 1. Input guardrails | Toxicidad, prompt injection, PII | **exception** (pendiente: otro bloque del curso) |
+| 2. Cache lookup | Busca un pedido idéntico | **return on hit** |
+| 3. Render prompt | `render_estimation_prompt(request)` → `(system, user)` | determinístico |
+| 4. LLM + Instructor | `role: "system"` y `role: "user"` separados, exigiendo `EstimationResult` | **fix · retry**: si Pydantic rechaza la respuesta, el modelo la corrige |
+| 5. Output guardrail | `enforce_scope_response` (`app/guardrails/output.py`) | **filter**: degrada a `"Out of scope: ..."` |
+| 6. Cache write | Guarda el resultado | **solo si es válido** |
+
+Guardrails de salida:
+
+- **Fix · retry** (`model_validator` en `EstimationResult`): los totales tienen que cerrar con las fases, y si `confidence_pct` es menor a 40, el `summary` tiene que empezar con `"Out of scope:"`. Así el modelo declara él mismo cuándo no puede estimar en lugar de inventar números.
+- **Filter** (`enforce_scope_response`): si el modelo declaró *out of scope*, o el proyecto supera `SCOPE_MAX_WEEKS`, se devuelve un `EstimationResult` con la forma de siempre y el prefijo en el `summary` (HTTP 200). Cada disparo queda en los logs como `guardrail_triggered` con su política y motivo.
 
 ## Estructura
 
@@ -126,9 +136,13 @@ estimador-cag/
 │   ├── prompts/
 │   │   ├── loader.py                 # Renderiza los prompts Jinja2 por versión
 │   │   └── estimation/v1/            # Plantillas system.j2, user.j2 y examples.j2
-│   └── services/
-│       ├── llm_service.py            # Instructor + LiteLLM, caché, errores y logs
-│       └── cache.py                  # Caché exact-match (LRU en memoria)
+│   ├── services/
+│   │   ├── estimation.py             # Caso de uso: pipeline de 6 pasos con sus políticas
+│   │   └── llm_wrapper.py            # Instructor + LiteLLM: la llamada al modelo
+│   ├── guardrails/
+│   │   └── output.py                 # enforce_scope_response (política filter)
+│   └── cache/
+│       └── exact.py                  # Caché exact-match (LRU en memoria)
 ├── streamlit_app.py                  # Cliente: formulario y visualización de los datos
 ├── tests/                            # Tests de schemas, prompts, servicio, API, cliente y estructura
 ├── .github/workflows/ci.yml          # Pipeline de CI
@@ -179,6 +193,7 @@ Las API keys se leen siempre desde `.env`. Nunca están escritas en el código, 
 | `LOG_LEVEL` | Nivel de logs | `info` |
 | `MAX_TOKENS` | Largo máximo de la respuesta | `16000` |
 | `CACHE_MAX_ENTRIES` | Respuestas que guarda la caché | `128` |
+| `SCOPE_MAX_WEEKS` | Duración máxima antes de considerar el pedido fuera de scope | `104` |
 | `PROMPT_VERSION` | Versión de las plantillas en `app/prompts/estimation/` | `v1` |
 | `ESTIMATOR_API_URL` | Dirección del servicio IA que usa el cliente | `http://127.0.0.1:8000` |
 | `ESTIMATOR_API_TIMEOUT` | Segundos que el cliente espera la respuesta | `300` |

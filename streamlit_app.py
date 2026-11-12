@@ -48,6 +48,14 @@ def euros(amount: int) -> str:
 def render_estimation(result: EstimationResult, output_format: OutputFormat) -> None:
     """Dibuja los datos estructurados según el formato elegido en el formulario."""
     st.subheader("Estimación")
+    if result.is_out_of_scope:
+        # Respuesta degradada por el output guardrail (política FILTER).
+        st.warning(result.summary)
+        st.caption(f"Confianza: {result.confidence_pct} %. Siguiente paso sugerido:")
+        for phase in result.phases:
+            st.markdown(f"- **{phase.name}:** {phase.description}")
+        return
+
     weeks_column, cost_column, confidence_column = st.columns(3)
     weeks_column.metric("Duración total", f"{result.total_duration_weeks} semanas")
     cost_column.metric("Costo total", euros(result.total_cost_eur))

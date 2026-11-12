@@ -5,7 +5,8 @@ from app.config import settings
 from app.main import app
 from app.prompts.loader import render_estimation_prompt
 from app.schemas import EstimationRequest, EstimationResult
-from app.services.llm_service import InvalidLLMOutputError, LLMProviderError
+from app.services import estimation
+from app.services.llm_wrapper import InvalidLLMOutputError, LLMProviderError
 
 client = TestClient(app)
 
@@ -28,19 +29,20 @@ def received(monkeypatch, estimation_result):
         calls.update(
             system=system_prompt, user=user_message, response_model=response_model
         )
-        return estimation_result, False
+        return estimation_result
 
-    monkeypatch.setattr(
-        "app.routers.estimations.generate_structured", fake_generate_structured
-    )
-    return calls
+    monkeypatch.setattr(estimation, "generate_structured", fake_generate_structured)
+    estimation.cache.clear()
+    yield calls
+    estimation.cache.clear()
 
 
 def fail_with(monkeypatch, error):
     def failing(system_prompt, user_message, response_model):
         raise error
 
-    monkeypatch.setattr("app.routers.estimations.generate_structured", failing)
+    monkeypatch.setattr(estimation, "generate_structured", failing)
+    estimation.cache.clear()
 
 
 def test_health_check():

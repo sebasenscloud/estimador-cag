@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas import EstimationResult
+from app.schemas import LOW_CONFIDENCE_PCT, OUT_OF_SCOPE_PREFIX, EstimationResult
 
 
 def result_data(estimation_result: EstimationResult, **changes) -> dict:
@@ -54,3 +54,22 @@ def test_json_schema_lists_phases_before_totals():
     assert fields.index("phases") < fields.index("total_cost_eur")
     assert set(schema["required"]) >= {"summary", "phases", "total_cost_eur"}
     assert schema["properties"]["total_cost_eur"]["minimum"] == 0
+
+
+def test_low_confidence_without_out_of_scope_prefix_is_rejected(estimation_result):
+    with pytest.raises(ValidationError, match=OUT_OF_SCOPE_PREFIX):
+        EstimationResult.model_validate(
+            result_data(estimation_result, confidence_pct=LOW_CONFIDENCE_PCT - 1)
+        )
+
+
+def test_low_confidence_with_out_of_scope_prefix_is_accepted(estimation_result):
+    result = EstimationResult.model_validate(
+        result_data(
+            estimation_result,
+            confidence_pct=LOW_CONFIDENCE_PCT - 1,
+            summary=f"{OUT_OF_SCOPE_PREFIX} faltan requisitos.",
+        )
+    )
+
+    assert result.is_out_of_scope

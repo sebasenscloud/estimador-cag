@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from app.services.cache import ExactMatchCache
+from app.cache.exact import ExactMatchCache
 
 
 class FakeResult(BaseModel):

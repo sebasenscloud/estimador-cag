@@ -3,7 +3,12 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from app.schemas import PROJECT_TYPE_LABELS, EstimationRequest
+from app.schemas import (
+    LOW_CONFIDENCE_PCT,
+    OUT_OF_SCOPE_PREFIX,
+    PROJECT_TYPE_LABELS,
+    EstimationRequest,
+)
 
 ESTIMATION_PROMPTS_DIR = Path(__file__).parent / "estimation"
 
@@ -45,6 +50,8 @@ def render_estimation_prompt(
         "project_type_label": PROJECT_TYPE_LABELS[request.project_type],
         "detail_level": request.detail_level.value,
         "output_format": request.output_format.value,
+        "low_confidence_pct": LOW_CONFIDENCE_PCT,
+        "out_of_scope_prefix": OUT_OF_SCOPE_PREFIX,
     }
 
     system = environment.get_template("system.j2").render(**context).strip()

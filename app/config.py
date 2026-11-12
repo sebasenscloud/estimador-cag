@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     log_level: str = "info"
     max_tokens: int = 16000
     cache_max_entries: int = 128
+    # Output guardrail: proyectos más largos que esto se consideran fuera de scope.
+    scope_max_weeks: int = 104
     prompt_version: str = "v1"
     estimator_api_url: str = "http://127.0.0.1:8000"
     estimator_api_timeout: float = 300.0

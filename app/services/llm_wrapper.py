@@ -10,11 +10,8 @@ from instructor.core.exceptions import InstructorRetryException
 from pydantic import BaseModel
 
 from app.config import settings
-from app.services.cache import ExactMatchCache
 
 logger = structlog.get_logger()
-
-cache = ExactMatchCache(max_entries=settings.cache_max_entries)
 
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 
@@ -51,35 +48,27 @@ def _api_key(model: str) -> str:
     return api_key
 
 
+def _messages(system_prompt: str, user_message: str) -> list[dict]:
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_message},
+    ]
+
+
 def generate_structured(
     system_prompt: str, user_message: str, response_model: type[ResponseModel]
-) -> tuple[ResponseModel, bool]:
+) -> ResponseModel:
     """Pide al modelo una respuesta que cumpla `response_model`.
 
-    Devuelve (resultado validado, si salió de la caché).
+    Política FIX · RETRY: si la respuesta no pasa la validación de Pydantic,
+    Instructor le reenvía el error al modelo hasta `LLM_MAX_RETRIES` veces.
     """
     start = time.perf_counter()
     model = settings.llm_model
-    key = cache.make_key(model, response_model.__name__, system_prompt, user_message)
-
-    cached = cache.get(key)
-    if cached is not None:
-        logger.info(
-            "llm_request_completed",
-            model=model,
-            prompt_version=settings.prompt_version,
-            cache_hit=True,
-            duration_ms=round((time.perf_counter() - start) * 1000),
-        )
-        return cached, True
-
     try:
         result, completion = get_client().chat.completions.create_with_completion(
             model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ],
+            messages=_messages(system_prompt, user_message),
             response_model=response_model,
             max_retries=settings.llm_max_retries,
             max_tokens=settings.max_tokens,
@@ -97,18 +86,16 @@ def generate_structured(
         _log_failed(model, error)
         raise LLMProviderError(str(error)) from error
 
-    cache.set(key, result)
     usage = getattr(completion, "usage", None)
     logger.info(
         "llm_request_completed",
         model=model,
         prompt_version=settings.prompt_version,
-        cache_hit=False,
         input_tokens=getattr(usage, "prompt_tokens", None),
         output_tokens=getattr(usage, "completion_tokens", None),
         duration_ms=round((time.perf_counter() - start) * 1000),
     )
-    return result, False
+    return result
 
 
 def _log_failed(model: str, error: Exception) -> None:
