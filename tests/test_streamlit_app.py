@@ -1,5 +1,5 @@
-import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -7,191 +7,169 @@ from streamlit.testing.v1 import AppTest
 
 APP_PATH = Path(__file__).parent.parent / "streamlit_app.py"
 
-DESCRIPTION = "El cliente necesita una app de turnos con login y calendario."
+TRANSCRIPT = "El cliente necesita una app de turnos con login y calendario."
 
 
-class FakeStreamResponse:
-    """Imita la respuesta de httpx.stream: un context manager con líneas NDJSON."""
-
-    def __init__(self, status_code: int, lines: list[str]):
+class FakeResponse:
+    def __init__(self, status_code: int, payload: dict):
         self.status_code = status_code
-        self._lines = lines
-        self.text = "\n".join(lines)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return False
-
-    def read(self) -> bytes:
-        return self.text.encode()
+        self._payload = payload
+        self.text = str(payload)
 
     def json(self) -> dict:
-        return json.loads(self.text)
-
-    def iter_lines(self):
-        yield from self._lines
+        return self._payload
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            request = httpx.Request("POST", "http://test/api/v1/estimate/stream")
+            request = httpx.Request("POST", "http://test")
             raise httpx.HTTPStatusError("error", request=request, response=self)
 
 
-def final_line(result) -> str:
-    response = {"result": result.model_dump(), "prompt_version": "v1", "cached": False}
-    return json.dumps({"type": "final", "response": response})
+class FakeService:
+    """Simula el servicio IA: crea sesiones y responde turnos."""
 
+    def __init__(self, estimation_result, turn_status: int = 200):
+        self.estimation_result = estimation_result
+        self.turn_status = turn_status
+        self.sessions_created = 0
+        self.turns = []
 
-def partial_line(**fields) -> str:
-    return json.dumps({"type": "partial", "partial": fields})
+    def post(self, url, data=None, files=None, timeout=None):
+        if url.endswith("/api/v1/sessions"):
+            self.sessions_created += 1
+            return FakeResponse(201, {"session_id": f"sesion-{self.sessions_created}"})
 
-
-def fake_stream(monkeypatch, response: FakeStreamResponse, sent: list | None = None):
-    def stream(method, url, json, timeout):
-        if sent is not None:
-            sent.append({"method": method, "url": url, "json": json})
-        return response
-
-    monkeypatch.setattr(httpx, "stream", stream)
+        self.turns.append(SimpleNamespace(url=url, data=data, files=files))
+        if self.turn_status != 200:
+            return FakeResponse(self.turn_status, {"detail": "error del servicio"})
+        return FakeResponse(
+            200,
+            {
+                "session_id": url.split("/")[-2],
+                "history_turns": len(self.turns),
+                "result": self.estimation_result.model_dump(),
+                "project_metadata": {
+                    "project_name": "Turnito",
+                    "assumed_team_size": 3,
+                    "mentioned_technologies": ["Flutter", "Stripe"],
+                    "agreed_scope": "Incluye pagos online.",
+                },
+                "prompt_version": "v1",
+                "attachments": [],
+            },
+        )
 
 
 @pytest.fixture
-def sent_requests(monkeypatch, estimation_result):
-    sent = []
-    lines = [
-        partial_line(summary="SaaS B2B", phases=[{"name": "Discovery"}]),
-        partial_line(
-            summary="SaaS B2B de reservas",
-            phases=[{"name": "Discovery", "duration_weeks": 4}, {"name": "Build"}],
-        ),
-        final_line(estimation_result),
-    ]
-    fake_stream(monkeypatch, FakeStreamResponse(200, lines), sent)
-    return sent
+def service(monkeypatch, estimation_result):
+    fake = FakeService(estimation_result)
+    monkeypatch.setattr(httpx, "post", fake.post)
+    return fake
 
 
 def run_app() -> AppTest:
     return AppTest.from_file(str(APP_PATH)).run(timeout=30)
 
 
-def submit(app: AppTest, output_format_index: int = 0) -> AppTest:
-    app.text_area[0].input(DESCRIPTION)
+def send(app: AppTest, text: str = TRANSCRIPT, output_format_index: int = 0):
+    app.text_area[0].input(text)
     app.selectbox[2].select_index(output_format_index)
-    return app.button[0].click().run(timeout=30)
+    return app.button(key="FormSubmitter:turn_form-Enviar").click().run(timeout=30)
 
 
-def test_form_has_all_fields():
+def sidebar_text(app: AppTest) -> str:
+    return "\n".join(
+        element.value for element in [*app.sidebar.markdown, *app.sidebar.caption]
+    )
+
+
+def test_page_load_creates_a_session(service):
     app = run_app()
 
-    assert [area.label for area in app.text_area] == ["Descripción del proyecto"]
+    assert service.sessions_created == 1
+    assert app.session_state.session_id == "sesion-1"
+    assert "sesion-1" in sidebar_text(app)
+    assert not app.exception
+
+
+def test_form_has_transcript_selectors_and_uploader(service):
+    app = run_app()
+
+    assert [area.label for area in app.text_area] == ["Transcripción o mensaje"]
     assert [box.label for box in app.selectbox] == [
         "Tipo de proyecto",
         "Nivel de detalle",
         "Formato de salida",
     ]
-    assert not app.exception
+    assert len(app.get("file_uploader")) == 1
 
 
-def test_submit_streams_estimation_request_json(sent_requests):
-    app = run_app()
-    app.text_area[0].input(DESCRIPTION)
-    app.selectbox[0].select_index(1)
-    app.button[0].click().run(timeout=30)
+def test_turn_is_sent_as_multipart_to_the_session(service):
+    app = send(run_app())
 
-    assert len(sent_requests) == 1
-    assert sent_requests[0]["method"] == "POST"
-    assert sent_requests[0]["url"].endswith("/api/v1/estimate/stream")
-    assert sent_requests[0]["json"] == {
-        "description": DESCRIPTION,
-        "project_type": "web_saas",
+    turn = service.turns[0]
+    assert turn.url.endswith("/api/v1/sessions/sesion-1/estimate")
+    assert turn.data == {
+        "transcript": TRANSCRIPT,
+        "project_type": "mobile_app",
         "detail_level": "medium",
         "output_format": "phases_table",
     }
+    assert turn.files == []
     assert not app.exception
 
 
-def test_final_result_replaces_the_partial_view(sent_requests):
-    app = submit(run_app(), output_format_index=0)
+def test_conversation_and_memory_are_shown(service):
+    app = send(send(run_app()))
 
-    assert len(app.dataframe) == 1
-    table = app.dataframe[0].value
-    assert list(table["Fase"]) == ["Discovery", "Build", "QA + launch"]
-    assert list(table["Semanas"]) == [4, 8, 2]
-    assert [metric.value for metric in app.metric][:3] == [
-        "14 semanas",
-        "24.000 €",
-        "75 %",
-    ]
+    assert len(app.chat_message) == 4
+    assert len(app.dataframe) == 2
+    sidebar = sidebar_text(app)
+    assert "Turnito" in sidebar
+    assert "Flutter, Stripe" in sidebar
+    assert "3 personas" in sidebar
 
 
-def test_line_items_render_one_item_per_phase(sent_requests):
-    app = submit(run_app(), output_format_index=1)
-
-    items = [md.value for md in app.markdown if md.value.startswith("- **Discovery")]
-    assert len(items) == 1
-    assert items[0].count("\n- **") == 2
-    assert not app.dataframe
-
-
-def test_narrative_renders_a_paragraph_per_phase(sent_requests):
-    app = submit(run_app(), output_format_index=2)
-
-    paragraphs = [md.value for md in app.markdown if md.value.startswith("**1.")]
-    assert paragraphs and "Discovery" in paragraphs[0]
-    assert not app.dataframe
-
-
-def test_short_description_is_not_sent(sent_requests):
+def test_metadata_starts_empty(service):
     app = run_app()
-    app.text_area[0].input("corto")
-    app.button[0].click().run(timeout=30)
 
-    assert sent_requests == []
+    assert "Vacía" in sidebar_text(app)
+
+
+def test_new_conversation_creates_a_session_and_resets_state(service):
+    app = send(run_app())
+    app.sidebar.button[0].click().run(timeout=30)
+
+    assert service.sessions_created == 2
+    assert app.session_state.session_id == "sesion-2"
+    assert app.session_state.turns == []
+    assert not app.chat_message
+    assert "Vacía" in sidebar_text(app)
+
+
+def test_short_transcript_is_not_sent(service):
+    app = send(run_app(), text="corto")
+
+    assert service.turns == []
     assert app.warning
 
 
-def test_http_error_is_shown(monkeypatch):
-    body = json.dumps({"detail": "Error al comunicarse con el proveedor"})
-    fake_stream(monkeypatch, FakeStreamResponse(502, [body]))
+def test_lost_session_suggests_a_new_conversation(monkeypatch, estimation_result):
+    fake = FakeService(estimation_result, turn_status=404)
+    monkeypatch.setattr(httpx, "post", fake.post)
 
-    app = submit(run_app())
+    app = send(run_app())
 
-    assert "502" in app.error[0].value
-
-
-def test_error_event_in_the_stream_is_shown(monkeypatch):
-    lines = [
-        partial_line(summary="SaaS"),
-        json.dumps({"type": "error", "detail": "la suma no cierra"}),
-    ]
-    fake_stream(monkeypatch, FakeStreamResponse(200, lines))
-
-    app = submit(run_app())
-
-    assert "la suma no cierra" in app.error[0].value
-    assert not app.dataframe
+    assert "Nueva conversación" in app.error[0].value
 
 
-def test_unreachable_service_is_shown(monkeypatch):
-    def unreachable(method, url, json, timeout):
+def test_service_down_on_load_shows_retry(monkeypatch):
+    def unreachable(*args, **kwargs):
         raise httpx.ConnectError("connection refused")
 
-    monkeypatch.setattr(httpx, "stream", unreachable)
+    monkeypatch.setattr(httpx, "post", unreachable)
 
-    app = submit(run_app())
+    app = run_app()
 
-    assert "No se pudo conectar" in app.error[0].value
-
-
-def test_out_of_scope_result_shows_a_warning(monkeypatch, estimation_result):
-    degraded = estimation_result.model_copy(
-        update={"summary": "Out of scope: no es un proyecto de software."}
-    )
-    fake_stream(monkeypatch, FakeStreamResponse(200, [final_line(degraded)]))
-
-    app = submit(run_app())
-
-    assert "Out of scope" in app.warning[0].value
-    assert not app.dataframe
+    assert "No se pudo crear la sesión" in app.error[0].value
+    assert [button.label for button in app.button] == ["Reintentar"]

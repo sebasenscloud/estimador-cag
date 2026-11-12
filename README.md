@@ -389,10 +389,16 @@ uv run streamlit run streamlit_app.py
 
 Se abre en el navegador en http://localhost:8501.
 
-- Escribí la descripción del proyecto, elegí el tipo, el nivel de detalle y el formato, y tocá **Estimar**.
-- Mientras el modelo genera, se ven el resumen y las fases a medida que llegan (streaming parcial). Al terminar, se muestran la duración total, el costo total y la confianza, y debajo las fases como tabla, lista o narrativa según el formato elegido.
-- Si el pedido queda fuera de scope, se muestra un aviso con el motivo en lugar de los números.
-- El panel lateral muestra la versión del prompt, el tiempo, si la respuesta salió de la caché y el JSON enviado al servicio.
+El cliente trabaja **por sesiones**:
+
+- Al cargar la página crea una sesión (`POST /api/v1/sessions`) y guarda el `session_id` en `st.session_state`.
+- Escribí la transcripción o un mensaje, adjuntá PDFs o Word si querés (selector múltiple), elegí tipo, nivel de detalle y formato, y tocá **Enviar**. Cada envío es un turno de `POST /api/v1/sessions/{session_id}/estimate`.
+- La conversación se muestra como chat: tus mensajes (con sus adjuntos) y cada estimación como tabla, lista o narrativa.
+- El panel lateral muestra la **memoria del proyecto** (`project_metadata`), separada de la conversación (el historial), y cuánto texto se extrajo de cada adjunto.
+- **Nueva conversación** crea otra sesión y resetea el estado.
+- Si el servicio se reinicia, la sesión se pierde (vive en memoria del proceso) y el cliente lo avisa.
+
+El endpoint de streaming parcial (`POST /api/v1/estimate/stream`) sigue disponible en la API, pero el cliente ya no lo usa: los turnos de sesión devuelven la respuesta completa.
 
 ### Llamar al servicio directamente
 
