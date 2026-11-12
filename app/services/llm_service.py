@@ -1,109 +1,121 @@
 import time
-from collections.abc import Iterator
+from functools import lru_cache
+from typing import TypeVar
 
+import instructor
+import litellm
+import openai
 import structlog
+from instructor.core.exceptions import InstructorRetryException
+from pydantic import BaseModel
 
 from app.config import settings
 from app.services.cache import ExactMatchCache
-from app.services.providers import LLMProvider, LLMResult, get_provider
 
 logger = structlog.get_logger()
 
 cache = ExactMatchCache(max_entries=settings.cache_max_entries)
 
-
-def _cache_key(provider: LLMProvider, system_prompt: str, user_message: str) -> str:
-    return cache.make_key(provider.name, provider.model, system_prompt, user_message)
+ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 
 
-def _log_completed(result: LLMResult, cache_hit: bool, streaming: bool, start: float):
+class LLMProviderError(Exception):
+    """Falla al comunicarse con el proveedor (red, API key, límites, etc.)."""
+
+
+class InvalidLLMOutputError(Exception):
+    """El modelo no devolvió datos válidos ni siquiera después de los reintentos."""
+
+
+@lru_cache
+def get_client() -> instructor.Instructor:
+    """Instructor sobre LiteLLM: una sola interfaz tipada para todos los proveedores."""
+    return instructor.from_litellm(litellm.completion)
+
+
+def provider_name(model: str) -> str:
+    return litellm.get_llm_provider(model)[1]
+
+
+def _api_key(model: str) -> str:
+    keys = {
+        "anthropic": settings.anthropic_api_key,
+        "openai": settings.openai_api_key,
+    }
+    provider = provider_name(model)
+    api_key = keys.get(provider)
+    if not api_key:
+        raise LLMProviderError(
+            f"Falta la API key de '{provider}' en el .env para el modelo '{model}'."
+        )
+    return api_key
+
+
+def generate_structured(
+    system_prompt: str, user_message: str, response_model: type[ResponseModel]
+) -> tuple[ResponseModel, bool]:
+    """Pide al modelo una respuesta que cumpla `response_model`.
+
+    Devuelve (resultado validado, si salió de la caché).
+    """
+    start = time.perf_counter()
+    model = settings.llm_model
+    key = cache.make_key(model, response_model.__name__, system_prompt, user_message)
+
+    cached = cache.get(key)
+    if cached is not None:
+        logger.info(
+            "llm_request_completed",
+            model=model,
+            prompt_version=settings.prompt_version,
+            cache_hit=True,
+            duration_ms=round((time.perf_counter() - start) * 1000),
+        )
+        return cached, True
+
+    try:
+        result, completion = get_client().chat.completions.create_with_completion(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            response_model=response_model,
+            max_retries=settings.llm_max_retries,
+            max_tokens=settings.max_tokens,
+            api_key=_api_key(model),
+        )
+    except InstructorRetryException as error:
+        _log_failed(model, error)
+        if isinstance(error.__cause__, openai.APIError):
+            raise LLMProviderError(str(error.__cause__)) from error
+        raise InvalidLLMOutputError(
+            f"El modelo no devolvió una estimación válida tras "
+            f"{error.n_attempts} intentos: {error}"
+        ) from error
+    except openai.APIError as error:
+        _log_failed(model, error)
+        raise LLMProviderError(str(error)) from error
+
+    cache.set(key, result)
+    usage = getattr(completion, "usage", None)
     logger.info(
         "llm_request_completed",
-        provider=result.provider,
-        model=result.model,
+        model=model,
         prompt_version=settings.prompt_version,
-        input_tokens=result.input_tokens,
-        output_tokens=result.output_tokens,
-        cache_hit=cache_hit,
-        streaming=streaming,
+        cache_hit=False,
+        input_tokens=getattr(usage, "prompt_tokens", None),
+        output_tokens=getattr(usage, "completion_tokens", None),
         duration_ms=round((time.perf_counter() - start) * 1000),
     )
+    return result, False
 
 
-def _log_failed(provider: LLMProvider, error: Exception, streaming: bool):
+def _log_failed(model: str, error: Exception) -> None:
     logger.error(
         "llm_request_failed",
-        provider=provider.name,
-        model=provider.model,
+        model=model,
         prompt_version=settings.prompt_version,
-        streaming=streaming,
         error_type=type(error).__name__,
         error=str(error),
     )
-
-
-def generate_text(system_prompt: str, user_message: str) -> str:
-    """Envía el system y el user prompt al proveedor activo y devuelve el texto."""
-    start = time.perf_counter()
-    provider = get_provider()
-    key = _cache_key(provider, system_prompt, user_message)
-
-    result = cache.get(key)
-    cache_hit = result is not None
-
-    if not cache_hit:
-        try:
-            result = provider.generate(system_prompt, user_message)
-        except Exception as error:
-            _log_failed(provider, error, streaming=False)
-            raise
-        cache.set(key, result)
-
-    _log_completed(result, cache_hit=cache_hit, streaming=False, start=start)
-    return result.text
-
-
-def stream_text(
-    system_prompt: str, user_message: str, metrics: dict | None = None
-) -> Iterator[str]:
-    """Igual que generate_text, pero entrega la respuesta de a pedazos."""
-    start = time.perf_counter()
-    provider = get_provider()
-    key = _cache_key(provider, system_prompt, user_message)
-
-    result = cache.get(key)
-    cache_hit = result is not None
-
-    if cache_hit:
-        yield result.text
-    else:
-        usage = {}
-        pieces = []
-        try:
-            for piece in provider.stream(system_prompt, user_message, usage):
-                pieces.append(piece)
-                yield piece
-        except Exception as error:
-            _log_failed(provider, error, streaming=True)
-            raise
-
-        result = LLMResult(
-            text="".join(pieces),
-            provider=provider.name,
-            model=usage.get("model", provider.model),
-            input_tokens=usage.get("input_tokens", 0),
-            output_tokens=usage.get("output_tokens", 0),
-        )
-        cache.set(key, result)
-
-    _log_completed(result, cache_hit=cache_hit, streaming=True, start=start)
-
-    if metrics is not None:
-        metrics.update(
-            provider=result.provider,
-            model=result.model,
-            input_tokens=result.input_tokens,
-            output_tokens=result.output_tokens,
-            cache_hit=cache_hit,
-            prompt_version=settings.prompt_version,
-        )

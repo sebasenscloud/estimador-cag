@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from jinja2 import UndefinedError
 
@@ -7,7 +9,13 @@ from app.prompts.loader import (
     available_versions,
     render_estimation_prompt,
 )
-from app.schemas import DetailLevel, EstimationRequest, OutputFormat, ProjectType
+from app.schemas import (
+    DetailLevel,
+    EstimationRequest,
+    EstimationResult,
+    OutputFormat,
+    ProjectType,
+)
 
 REQUEST = EstimationRequest(
     description="Una inmobiliaria quiere un SaaS para publicar propiedades y agendar visitas.",
@@ -16,16 +24,10 @@ REQUEST = EstimationRequest(
     output_format=OutputFormat.PHASES_TABLE,
 )
 
-FORMAT_MARKERS = {
-    OutputFormat.PHASES_TABLE: "tabla en markdown organizada por fases",
-    OutputFormat.LINE_ITEMS: "un ítem por tarea",
-    OutputFormat.NARRATIVE: "texto narrativo en párrafos",
-}
-
 DETAIL_MARKERS = {
-    DetailLevel.SUMMARY: "estimación resumida",
-    DetailLevel.MEDIUM: "estimación intermedia",
-    DetailLevel.DETAILED: "estimación detallada",
+    DetailLevel.SUMMARY: "nivel resumido",
+    DetailLevel.MEDIUM: "nivel intermedio",
+    DetailLevel.DETAILED: "nivel detallado",
 }
 
 
@@ -62,12 +64,22 @@ def test_user_wraps_description_and_project_type():
     assert "<tipo_de_proyecto>SaaS web</tipo_de_proyecto>" in user
 
 
-@pytest.mark.parametrize("output_format", list(OutputFormat))
-def test_only_the_selected_output_format_is_rendered(output_format):
-    system, _ = render(output_format=output_format)
+def test_output_format_does_not_change_the_prompt():
+    # El formato es una decisión de la UI: los mismos datos sirven para todos.
+    prompts = {render(output_format=option) for option in OutputFormat}
 
-    for option, marker in FORMAT_MARKERS.items():
-        assert (marker in system.lower()) == (option == output_format)
+    assert len(prompts) == 1
+
+
+def test_few_shot_examples_match_the_result_schema():
+    system, _ = render_estimation_prompt(REQUEST)
+    examples = re.findall(
+        r"<estimacion>\s*(\{.*?\})\s*</estimacion>", system, re.DOTALL
+    )
+
+    assert len(examples) >= 2
+    for example in examples:
+        EstimationResult.model_validate_json(example)
 
 
 @pytest.mark.parametrize("detail_level", list(DetailLevel))
@@ -88,11 +100,10 @@ def test_no_template_syntax_leaks_into_output():
 
 def test_block_tags_leave_no_indented_or_triple_blank_lines():
     system, _ = render_estimation_prompt(REQUEST)
+    instructions = system.split("<ejemplos>")[0]
 
     assert "\n\n\n" not in system
-    assert all(
-        line == line.lstrip() or line.startswith("|") for line in system.splitlines()
-    )
+    assert all(line == line.lstrip() for line in instructions.splitlines())
 
 
 def test_unknown_version_raises_clear_error():

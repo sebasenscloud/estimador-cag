@@ -5,19 +5,18 @@
 Una empresa de 300 empleados quiere un portal para pedir vacaciones. Login con Google Workspace, aprobación del manager directo, calendario del equipo y exportación mensual a Excel para Recursos Humanos.
 </descripcion>
 <estimacion>
-| Fase | Tareas | Horas |
-|---|---|---|
-| Descubrimiento | Relevamiento con RR. HH. y reglas de aprobación | 16 |
-| Diseño UX | Flujos de pedido, aprobación y calendario | 24 |
-| Backend | API de solicitudes, saldos de días y aprobaciones | 60 |
-| Frontend | Formulario, bandeja del manager y calendario | 48 |
-| Integraciones | SSO con Google Workspace y exportación a Excel | 16 |
-| Testing | Pruebas funcionales y de permisos | 24 |
-| Despliegue | Infraestructura, monitoreo y capacitación | 12 |
-| **Total** | | **200** |
-
-**Equipo recomendado:** 1 desarrollador full-stack, 1 desarrollador de apoyo part-time y 1 diseñador UX part-time.
-**Duración estimada:** 6 a 7 semanas.
+{
+  "summary": "Portal interno de vacaciones con SSO de Google, flujo de aprobación y reportes para RR. HH. Se asume que el organigrama se obtiene de Google Workspace.",
+  "phases": [
+    {"name": "Discovery", "description": "Relevamiento con RR. HH. y definición de reglas de aprobación.", "duration_weeks": 1, "cost_eur": 1600, "confidence_pct": 90},
+    {"name": "Diseño UX", "description": "Flujos de pedido, bandeja del manager y calendario.", "duration_weeks": 1, "cost_eur": 2400, "confidence_pct": 85},
+    {"name": "Desarrollo", "description": "API de solicitudes y saldos, frontend, SSO y exportación a Excel.", "duration_weeks": 3, "cost_eur": 10800, "confidence_pct": 75},
+    {"name": "Testing y despliegue", "description": "Pruebas de permisos, puesta en producción y capacitación.", "duration_weeks": 1, "cost_eur": 3200, "confidence_pct": 80}
+  ],
+  "total_duration_weeks": 6,
+  "total_cost_eur": 18000,
+  "confidence_pct": 80
+}
 </estimacion>
 </ejemplo>
 
@@ -27,17 +26,18 @@ Una empresa de 300 empleados quiere un portal para pedir vacaciones. Login con G
 Una cadena de 40 sucursales deja cada noche un CSV de ventas en un servidor SFTP. Quieren cargarlo a BigQuery, validar la calidad de los datos y ver un tablero de ventas por sucursal en Looker Studio.
 </descripcion>
 <estimacion>
-- Relevamiento de fuentes y formatos de los CSV (12 h)
-- Ingesta desde SFTP y carga incremental a BigQuery (32 h)
-- Validaciones de calidad: duplicados, nulos y montos fuera de rango (24 h)
-- Modelado del data warehouse por sucursal, producto y fecha (28 h)
-- Orquestación diaria, reintentos y alertas por email (20 h)
-- Tablero en Looker Studio (24 h)
-- Documentación y traspaso al equipo de datos (8 h)
-
-**Total estimado:** 148 horas.
-**Equipo recomendado:** 1 data engineer y 1 analista de datos part-time.
-**Duración estimada:** 5 semanas.
+{
+  "summary": "Pipeline nocturno de ventas desde SFTP a BigQuery con controles de calidad y tablero en Looker Studio. Se asume un formato de CSV estable entre sucursales.",
+  "phases": [
+    {"name": "Relevamiento", "description": "Análisis de formatos de CSV y reglas de calidad.", "duration_weeks": 1, "cost_eur": 1500, "confidence_pct": 85},
+    {"name": "Ingesta y validaciones", "description": "Carga incremental desde SFTP y controles de duplicados, nulos y rangos.", "duration_weeks": 2, "cost_eur": 6000, "confidence_pct": 75},
+    {"name": "Modelado y orquestación", "description": "Modelo por sucursal, producto y fecha; ejecución diaria con alertas.", "duration_weeks": 1, "cost_eur": 3500, "confidence_pct": 75},
+    {"name": "Tablero y traspaso", "description": "Tablero en Looker Studio y documentación para el equipo de datos.", "duration_weeks": 1, "cost_eur": 2800, "confidence_pct": 80}
+  ],
+  "total_duration_weeks": 5,
+  "total_cost_eur": 13800,
+  "confidence_pct": 75
+}
 </estimacion>
 </ejemplo>
 
@@ -47,13 +47,18 @@ Una cadena de 40 sucursales deja cada noche un CSV de ventas en un servidor SFTP
 Una veterinaria quiere una app para iOS y Android donde los clientes saquen turnos, vean la historia clínica de sus mascotas y reciban recordatorios de vacunas. El personal necesita un panel web simple para cargar la agenda.
 </descripcion>
 <estimacion>
-El proyecto combina una app multiplataforma con un backend propio y un panel administrativo. El diseño de pantallas y la identidad visual llevan unas 40 horas. La app en Flutter, con turnos, perfil de mascotas e historia clínica, es el bloque más grande: 140 horas. El backend con la API, la base de datos y la autenticación suma 80 horas, y el panel web para el personal otras 40.
-
-Los recordatorios de vacunas con notificaciones push agregan 20 horas. Por tratarse de una app móvil, conviene reservar 40 horas de pruebas en dispositivos reales y 12 horas para la publicación en App Store y Google Play, que suele demorar por las revisiones de las tiendas.
-
-**Total estimado:** 372 horas.
-**Equipo recomendado:** 2 desarrolladores mobile, 1 desarrollador backend y 1 diseñador UX part-time.
-**Duración estimada:** 10 a 12 semanas.
+{
+  "summary": "App multiplataforma en Flutter con backend propio, panel web para el personal y notificaciones push. La publicación en tiendas agrega incertidumbre por las revisiones.",
+  "phases": [
+    {"name": "Discovery y diseño", "description": "Requisitos, identidad visual y diseño de pantallas.", "duration_weeks": 2, "cost_eur": 6000, "confidence_pct": 80},
+    {"name": "App móvil y backend", "description": "Turnos, perfiles de mascotas, historia clínica, API y autenticación.", "duration_weeks": 6, "cost_eur": 36000, "confidence_pct": 65},
+    {"name": "Panel y notificaciones", "description": "Panel web de agenda y recordatorios push de vacunas.", "duration_weeks": 1, "cost_eur": 5000, "confidence_pct": 70},
+    {"name": "QA y publicación", "description": "Pruebas en dispositivos reales y publicación en App Store y Google Play.", "duration_weeks": 2, "cost_eur": 7000, "confidence_pct": 65}
+  ],
+  "total_duration_weeks": 11,
+  "total_cost_eur": 54000,
+  "confidence_pct": 70
+}
 </estimacion>
 </ejemplo>
 </ejemplos>

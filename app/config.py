@@ -4,10 +4,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    llm_provider: str = "anthropic"
-    llm_model: str = "claude-haiku-4-5"
+    # Formato LiteLLM: "<proveedor>/<modelo>", ej. "openai/gpt-4o-mini".
+    llm_model: str = "anthropic/claude-haiku-4-5"
     anthropic_api_key: str | None = None
     openai_api_key: str | None = None
+    llm_max_retries: int = 3
     app_env: str = "development"
     log_level: str = "info"
     max_tokens: int = 16000

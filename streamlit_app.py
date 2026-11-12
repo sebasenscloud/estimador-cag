@@ -12,6 +12,7 @@ from app.schemas import (
     DetailLevel,
     EstimationRequest,
     EstimationResponse,
+    EstimationResult,
     OutputFormat,
     ProjectType,
 )
@@ -38,6 +39,51 @@ def error_detail(response: httpx.Response) -> str:
     if isinstance(detail, list):
         return "; ".join(item.get("msg", str(item)) for item in detail)
     return str(detail)
+
+
+def euros(amount: int) -> str:
+    return f"{amount:,} €".replace(",", ".")
+
+
+def render_estimation(result: EstimationResult, output_format: OutputFormat) -> None:
+    """Dibuja los datos estructurados según el formato elegido en el formulario."""
+    st.subheader("Estimación")
+    weeks_column, cost_column, confidence_column = st.columns(3)
+    weeks_column.metric("Duración total", f"{result.total_duration_weeks} semanas")
+    cost_column.metric("Costo total", euros(result.total_cost_eur))
+    confidence_column.metric("Confianza", f"{result.confidence_pct} %")
+    st.write(result.summary)
+
+    if output_format == OutputFormat.PHASES_TABLE:
+        st.dataframe(
+            [
+                {
+                    "Fase": phase.name,
+                    "Semanas": phase.duration_weeks,
+                    "Costo": euros(phase.cost_eur),
+                    "Confianza": f"{phase.confidence_pct} %",
+                    "Descripción": phase.description,
+                }
+                for phase in result.phases
+            ],
+            hide_index=True,
+        )
+    elif output_format == OutputFormat.LINE_ITEMS:
+        st.markdown(
+            "\n".join(
+                f"- **{phase.name}** ({phase.duration_weeks} sem., "
+                f"{euros(phase.cost_eur)}, confianza {phase.confidence_pct} %): "
+                f"{phase.description}"
+                for phase in result.phases
+            )
+        )
+    else:
+        for number, phase in enumerate(result.phases, start=1):
+            st.markdown(
+                f"**{number}. {phase.name}.** {phase.description} Esta fase lleva "
+                f"{phase.duration_weeks} semanas, cuesta {euros(phase.cost_eur)} "
+                f"y la estimamos con una confianza del {phase.confidence_pct} %."
+            )
 
 
 st.set_page_config(page_title="Estimador CAG", page_icon="🧮")
@@ -113,8 +159,9 @@ if submitted:
 last_result = st.session_state.last_result
 
 if last_result is not None:
-    st.subheader("Estimación")
-    st.markdown(last_result["response"].text)
+    render_estimation(
+        last_result["response"].result, last_result["request"].output_format
+    )
 
 with st.sidebar:
     st.header("Última estimación")
@@ -127,6 +174,9 @@ with st.sidebar:
             "Versión del prompt", last_result["response"].prompt_version
         )
         time_column.metric("Tiempo", f"{last_result['elapsed_seconds']:.1f} s")
+        st.metric(
+            "Caché", "Acierto" if last_result["response"].cached else "Llamada al LLM"
+        )
 
         st.subheader("Parámetros enviados")
         st.markdown(

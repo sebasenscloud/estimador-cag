@@ -1,108 +1,114 @@
-from collections.abc import Iterator
+from types import SimpleNamespace
 
+import httpx
+import openai
 import pytest
+from instructor.core.exceptions import InstructorRetryException
 
 from app.config import settings
+from app.schemas import EstimationResult
 from app.services import llm_service
-from app.services.providers import LLMProvider, LLMResult
 
 SYSTEM_PROMPT = "Sos un estimador experto de proyectos de software."
 USER_MESSAGE = "<descripcion>App de turnos con login y calendario.</descripcion>"
 
 
-class FakeProvider(LLMProvider):
-    name = "fake"
+class FakeCompletions:
+    def __init__(self, result=None, error=None):
+        self.result = result
+        self.error = error
+        self.calls = []
 
-    def __init__(self):
-        super().__init__(model="fake-model", max_tokens=1000)
-        self.generate_calls = []
-        self.stream_calls = 0
-
-    def generate(self, system_prompt: str, user_message: str) -> LLMResult:
-        self.generate_calls.append((system_prompt, user_message))
-        return LLMResult(
-            text="## Estimación falsa",
-            provider=self.name,
-            model=self.model,
-            input_tokens=1200,
-            output_tokens=80,
-        )
-
-    def stream(
-        self, system_prompt: str, user_message: str, usage: dict
-    ) -> Iterator[str]:
-        self.stream_calls += 1
-        yield "## Estimación "
-        yield "en streaming"
-        usage["model"] = self.model
-        usage["input_tokens"] = 1200
-        usage["output_tokens"] = 90
+    def create_with_completion(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        usage = SimpleNamespace(prompt_tokens=1200, completion_tokens=300)
+        return self.result, SimpleNamespace(usage=usage)
 
 
 @pytest.fixture
-def fake_provider(monkeypatch):
-    provider = FakeProvider()
-    monkeypatch.setattr(llm_service, "get_provider", lambda: provider)
+def fake_completions(monkeypatch, estimation_result):
+    completions = FakeCompletions(result=estimation_result)
+    client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    monkeypatch.setattr(llm_service, "get_client", lambda: client)
+    monkeypatch.setattr(settings, "llm_model", "anthropic/claude-haiku-4-5")
+    monkeypatch.setattr(settings, "anthropic_api_key", "fake-key")
     llm_service.cache.clear()
-    yield provider
+    yield completions
     llm_service.cache.clear()
 
 
-def test_generate_passes_system_and_user_separately(fake_provider):
-    llm_service.generate_text(SYSTEM_PROMPT, USER_MESSAGE)
-
-    assert fake_provider.generate_calls == [(SYSTEM_PROMPT, USER_MESSAGE)]
-
-
-def test_generate_returns_provider_text(fake_provider):
-    assert (
-        llm_service.generate_text(SYSTEM_PROMPT, USER_MESSAGE) == "## Estimación falsa"
+def generate():
+    return llm_service.generate_structured(
+        SYSTEM_PROMPT, USER_MESSAGE, EstimationResult
     )
 
 
-def test_generate_uses_cache_for_identical_prompts(fake_provider):
-    llm_service.generate_text(SYSTEM_PROMPT, USER_MESSAGE)
-    llm_service.generate_text(SYSTEM_PROMPT, USER_MESSAGE)
+def test_sends_system_and_user_as_separate_messages(fake_completions):
+    generate()
 
-    assert len(fake_provider.generate_calls) == 1
-
-
-def test_generate_does_not_use_cache_when_a_prompt_changes(fake_provider):
-    llm_service.generate_text(SYSTEM_PROMPT, USER_MESSAGE)
-    llm_service.generate_text(SYSTEM_PROMPT, USER_MESSAGE + " Con pagos online.")
-    llm_service.generate_text(SYSTEM_PROMPT + " Versión 2.", USER_MESSAGE)
-
-    assert len(fake_provider.generate_calls) == 3
+    assert fake_completions.calls[0]["messages"] == [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": USER_MESSAGE},
+    ]
 
 
-def test_stream_yields_pieces_and_fills_metrics(fake_provider):
-    metrics = {}
-    pieces = list(llm_service.stream_text(SYSTEM_PROMPT, USER_MESSAGE, metrics))
+def test_asks_instructor_for_the_response_model_with_retries(fake_completions):
+    generate()
+    call = fake_completions.calls[0]
 
-    assert pieces == ["## Estimación ", "en streaming"]
-    assert metrics["provider"] == "fake"
-    assert metrics["output_tokens"] == 90
-    assert metrics["cache_hit"] is False
-    assert metrics["prompt_version"] == settings.prompt_version
-
-
-def test_stream_uses_cache_on_second_call(fake_provider):
-    list(llm_service.stream_text(SYSTEM_PROMPT, USER_MESSAGE))
-    metrics = {}
-    pieces = list(llm_service.stream_text(SYSTEM_PROMPT, USER_MESSAGE, metrics))
-
-    assert "".join(pieces) == "## Estimación en streaming"
-    assert metrics["cache_hit"] is True
-    assert fake_provider.stream_calls == 1
+    assert call["response_model"] is EstimationResult
+    assert call["max_retries"] == settings.llm_max_retries
+    assert call["model"] == "anthropic/claude-haiku-4-5"
+    assert call["api_key"] == "fake-key"
 
 
-def test_errors_are_not_cached(fake_provider, monkeypatch):
-    def failing_generate(system_prompt, user_message):
-        raise ValueError("rechazo")
+def test_returns_validated_result_not_cached(fake_completions, estimation_result):
+    result, cached = generate()
 
-    monkeypatch.setattr(fake_provider, "generate", failing_generate)
+    assert result == estimation_result
+    assert cached is False
 
-    with pytest.raises(ValueError):
-        llm_service.generate_text(SYSTEM_PROMPT, USER_MESSAGE)
 
+def test_second_identical_call_comes_from_cache(fake_completions):
+    generate()
+    _, cached = generate()
+
+    assert cached is True
+    assert len(fake_completions.calls) == 1
+
+
+def test_different_prompt_is_not_cached(fake_completions):
+    generate()
+    llm_service.generate_structured(
+        SYSTEM_PROMPT, USER_MESSAGE + " Con pagos.", EstimationResult
+    )
+
+    assert len(fake_completions.calls) == 2
+
+
+def test_missing_api_key_raises_provider_error(fake_completions, monkeypatch):
+    monkeypatch.setattr(settings, "anthropic_api_key", None)
+
+    with pytest.raises(llm_service.LLMProviderError, match="anthropic"):
+        generate()
+
+
+def test_exhausted_retries_raise_invalid_output_error(fake_completions):
+    fake_completions.error = InstructorRetryException(
+        "total_cost_eur no coincide", n_attempts=3, total_usage=0
+    )
+
+    with pytest.raises(llm_service.InvalidLLMOutputError, match="3 intentos"):
+        generate()
     assert len(llm_service.cache) == 0
+
+
+def test_api_errors_raise_provider_error(fake_completions):
+    fake_completions.error = openai.APIConnectionError(
+        request=httpx.Request("POST", "https://api.example.com")
+    )
+
+    with pytest.raises(llm_service.LLMProviderError):
+        generate()

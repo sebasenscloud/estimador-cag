@@ -25,12 +25,17 @@ class FakeResponse:
 
 
 @pytest.fixture
-def sent_requests(monkeypatch):
+def sent_requests(monkeypatch, estimation_result):
     sent = []
+    payload = {
+        "result": estimation_result.model_dump(),
+        "prompt_version": "v1",
+        "cached": False,
+    }
 
     def fake_post(url, json, timeout):
         sent.append({"url": url, "json": json})
-        return FakeResponse(200, {"text": "## Estimación OK", "prompt_version": "v2"})
+        return FakeResponse(200, payload)
 
     monkeypatch.setattr(httpx, "post", fake_post)
     return sent
@@ -66,7 +71,43 @@ def test_submit_posts_estimation_request_json(sent_requests):
         "detail_level": "medium",
         "output_format": "phases_table",
     }
-    assert "## Estimación OK" in [markdown.value for markdown in app.markdown]
+    assert not app.exception
+
+
+def submit(app: AppTest, output_format_index: int) -> AppTest:
+    app.text_area[0].input(DESCRIPTION)
+    app.selectbox[2].select_index(output_format_index)
+    return app.button[0].click().run(timeout=30)
+
+
+def test_phases_table_renders_a_dataframe_from_the_data(sent_requests):
+    app = submit(run_app(), output_format_index=0)
+
+    table = app.dataframe[0].value
+    assert list(table["Fase"]) == ["Discovery", "Build", "QA + launch"]
+    assert list(table["Semanas"]) == [4, 8, 2]
+    assert [metric.value for metric in app.metric][:3] == [
+        "14 semanas",
+        "24.000 €",
+        "75 %",
+    ]
+
+
+def test_line_items_render_one_item_per_phase(sent_requests):
+    app = submit(run_app(), output_format_index=1)
+
+    items = [md.value for md in app.markdown if md.value.startswith("- **Discovery")]
+    assert len(items) == 1
+    assert items[0].count("\n- **") == 2
+    assert not app.dataframe
+
+
+def test_narrative_renders_a_paragraph_per_phase(sent_requests):
+    app = submit(run_app(), output_format_index=2)
+
+    paragraphs = [md.value for md in app.markdown if md.value.startswith("**1.")]
+    assert paragraphs and "Discovery" in paragraphs[0]
+    assert not app.dataframe
 
 
 def test_short_description_is_not_sent(sent_requests):

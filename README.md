@@ -1,25 +1,49 @@
 # Estimador CAG
 
-Estimador de proyectos de software basado en **CAG (Cache-Augmented Generation)**. A partir de la descripción de un proyecto, genera una estimación de esfuerzo en horas, con el nivel de detalle y el formato que elijas.
+Estimador de proyectos de software basado en **CAG (Cache-Augmented Generation)**. A partir de la descripción de un proyecto, genera una estimación **estructurada**: fases, duración en semanas, costo en euros y nivel de confianza.
 
 El contexto (estimaciones de ejemplo en `app/prompts/estimation/v1/examples.j2`) se inyecta directamente en el system prompt de cada llamada al LLM, sin base de datos ni búsqueda vectorial.
 
 El proyecto tiene dos piezas:
 
-- **Servicio IA** (FastAPI): expone `POST /api/v1/estimate` y es el único que habla con el LLM.
-- **Cliente** (Streamlit): un formulario que arma un `EstimationRequest` tipado y lo envía al servicio por HTTP.
+- **Servicio IA** (FastAPI): expone `POST /api/v1/estimate`, es el único que habla con el LLM y devuelve **datos tipados**, no prosa.
+- **Cliente** (Streamlit): un formulario que arma un `EstimationRequest` tipado, lo envía al servicio por HTTP y dibuja el resultado.
 
 ```
-Navegador → Streamlit (formulario) → POST /api/v1/estimate → FastAPI → LLM (Anthropic u OpenAI)
+Navegador → Streamlit (formulario) → POST /api/v1/estimate → FastAPI → Instructor + LiteLLM → LLM
+                    ▲                                                          │
+                    └──────────── EstimationResult (JSON validado) ◄───────────┘
 ```
 
 ## Características
 
-- **Contrato tipado con Pydantic v2** (`app/schemas.py`): `EstimationRequest` y `EstimationResponse`, con enums para el tipo de proyecto, el nivel de detalle y el formato de salida. El cliente reutiliza las mismas clases.
-- **Wrapper de proveedores:** una interfaz común (`LLMProvider`) con implementaciones para **Anthropic** y **OpenAI**. El proveedor se elige con `LLM_PROVIDER`, sin tocar código.
-- **Caching exact-match:** si llega exactamente la misma solicitud (descripción y opciones), con el mismo proveedor, modelo y prompt, la respuesta sale de una caché en memoria (LRU) sin llamar al LLM.
-- **Observabilidad con structlog:** se registra cada llamada al LLM (proveedor, modelo, versión del prompt, opciones elegidas, tokens, duración, acierto de caché, errores) y cada request HTTP de la API.
-- **Prompts versionados con Jinja2** (`app/prompts/`): el system y el user prompt viven en plantillas `.j2` separadas del código. La versión activa se elige con `PROMPT_VERSION` y se devuelve en cada respuesta.
+- **Contrato tipado con Pydantic v2** (`app/schemas/estimation.py`): request, response y el resultado estructurado (`EstimationResult`), con enums y validaciones. El cliente reutiliza las mismas clases.
+- **Salida estructurada con Instructor + LiteLLM:** el LLM devuelve JSON que cumple `EstimationResult`. Si no lo cumple, Instructor le reenvía el error al modelo y reintenta.
+- **Una sola interfaz para todos los proveedores:** cambiar de `openai/gpt-4o-mini` a `anthropic/claude-haiku-4-5` es una línea en `.env`.
+- **Caching exact-match:** una solicitud idéntica (mismo modelo, schema y prompts) sale de una caché en memoria (LRU) sin llamar al LLM. La respuesta lo indica con `cached`.
+- **Observabilidad con structlog:** se registra cada llamada al LLM (modelo, versión del prompt, opciones elegidas, tokens, duración, acierto de caché, errores) y cada request HTTP de la API.
+- **Prompts versionados con Jinja2** (`app/prompts/`): el system y el user prompt viven en plantillas `.j2`. La versión activa se elige con `PROMPT_VERSION`.
+
+## Salida estructurada
+
+Una definición, tres usos:
+
+```
+EstimationResult (Pydantic)
+   │  .model_json_schema()
+   ▼
+JSON Schema ──► Instructor + LiteLLM se lo mandan al LLM con el mecanismo nativo de cada proveedor
+   │
+   ▼
+JSON del LLM ──► Pydantic valida (tipos, rangos y que los totales cierren con las fases)
+   │                 └─ si falla: Instructor reenvía el error y el modelo corrige (LLM_MAX_RETRIES)
+   ▼
+EstimationResult ──► caché ──► EstimationResponse ──► Streamlit dibuja tabla, lista o narrativa
+```
+
+- **El orden de los campos importa:** `phases` va antes que los totales, así el modelo detalla las fases y recién después suma.
+- **`@model_validator`** comprueba que `total_duration_weeks` y `total_cost_eur` sean exactamente la suma de las fases.
+- **`output_format` es una decisión de la UI:** el prompt y los datos son los mismos para los tres formatos; Streamlit elige cómo dibujarlos.
 
 ## Prompts
 
@@ -28,20 +52,21 @@ app/prompts/
 ├── loader.py                 # render_estimation_prompt(request, version="v1") -> (system, user)
 └── estimation/
     └── v1/
-        ├── system.j2         # Rol, instrucciones, bloques según detail_level y output_format
+        ├── system.j2         # Rol, reglas de la estimación y bloque según detail_level
         ├── user.j2           # Envuelve el tipo de proyecto y la descripción del usuario
-        └── examples.j2       # Ejemplos few-shot, incluidos desde system.j2
+        └── examples.j2       # Ejemplos few-shot en el mismo JSON que EstimationResult
 ```
 
-- `system.j2` arma el rol y las instrucciones generales, y con `{% if %}` incluye **solo** las instrucciones del nivel de detalle y del formato de salida elegidos. Inserta los ejemplos con `{% include "examples.j2" %}`.
-- El loader usa `Environment` de Jinja2 con `StrictUndefined` (si falta una variable, falla en lugar de dejar un hueco en el prompt), `trim_blocks` y `lstrip_blocks` (las etiquetas `{% %}` no dejan líneas en blanco ni sangrías).
+- `system.j2` arma el rol y las reglas, y con `{% if %}` incluye **solo** las instrucciones del nivel de detalle elegido. Inserta los ejemplos con `{% include "examples.j2" %}`.
+- Los ejemplos están escritos en el mismo formato JSON que debe devolver el modelo, y un test verifica que cumplan `EstimationResult`.
+- El loader usa `Environment` de Jinja2 con `StrictUndefined`, `trim_blocks` y `lstrip_blocks`.
 
 ### Crear una versión nueva del prompt
 
 1. Copiá la carpeta `app/prompts/estimation/v1` como `v2` y editá las plantillas.
 2. Cambiá `PROMPT_VERSION=v2` en `.env` y reiniciá el servicio IA.
 
-No hace falta tocar código. La versión forma parte de la caché, así que las respuestas de `v1` no se reutilizan para `v2`, y cada respuesta indica en `prompt_version` qué versión la generó.
+No hace falta tocar código. Cada respuesta indica en `prompt_version` qué versión la generó.
 
 ## Contrato del servicio
 
@@ -58,10 +83,24 @@ No hace falta tocar código. La versión forma parte de la caché, así que las 
 
 | Campo | Tipo | Descripción |
 |---|---|---|
-| `text` | texto | La estimación generada (texto libre en Markdown) |
+| `result` | `EstimationResult` | La estimación estructurada |
 | `prompt_version` | texto | Versión del prompt que la generó |
+| `cached` | booleano | Si salió de la caché sin llamar al LLM |
 
-Si el JSON no cumple el contrato, el servicio responde **422** con el detalle del error.
+`EstimationResult`:
+
+| Campo | Tipo | Reglas |
+|---|---|---|
+| `summary` | texto | Resumen y supuestos |
+| `phases` | lista de `Phase` | Al menos una; cada fase con `name`, `description`, `duration_weeks` (≥ 1), `cost_eur` (≥ 0) y `confidence_pct` (0-100) |
+| `total_duration_weeks` | entero | Igual a la suma de las fases |
+| `total_cost_eur` | entero | Igual a la suma de las fases |
+| `confidence_pct` | entero | 0-100 |
+
+Errores:
+
+- **422:** el request no cumple el contrato.
+- **502:** el proveedor falló (red, API key, límites) o el modelo no devolvió un resultado válido después de los reintentos.
 
 ### Flujo del endpoint
 
@@ -69,8 +108,8 @@ Si el JSON no cumple el contrato, el servicio responde **422** con el detalle de
 
 1. Recibe el body validado como `EstimationRequest`.
 2. Llama a `render_estimation_prompt(request)` y obtiene `(system, user)`.
-3. Llama al modelo con los dos mensajes separados a través del wrapper de proveedores. OpenAI recibe `role: "system"` y `role: "user"`; Anthropic recibe el system en su parámetro `system` y el user como mensaje.
-4. Devuelve un `EstimationResponse` con el texto y la `prompt_version` usada.
+3. Llama al modelo con `role: "system"` y `role: "user"` separados, a través de Instructor + LiteLLM, exigiendo `EstimationResult`.
+4. Devuelve un `EstimationResponse` con el resultado, la `prompt_version` y `cached`.
 
 ## Estructura
 
@@ -79,23 +118,19 @@ estimador-cag/
 ├── app/
 │   ├── main.py                       # App FastAPI y middleware de logs HTTP
 │   ├── config.py                     # Configuración leída desde .env
-│   ├── schemas.py                    # Contrato Pydantic: request, response y enums
 │   ├── logging_config.py             # Configuración de structlog
+│   ├── schemas/
+│   │   └── estimation.py             # Contrato Pydantic: request, result, response y enums
 │   ├── routers/
 │   │   └── estimations.py            # Endpoint POST /api/v1/estimate
 │   ├── prompts/
 │   │   ├── loader.py                 # Renderiza los prompts Jinja2 por versión
 │   │   └── estimation/v1/            # Plantillas system.j2, user.j2 y examples.j2
 │   └── services/
-│       ├── llm_service.py            # Llamada al LLM, caché y logs
-│       ├── cache.py                  # Caché exact-match (LRU en memoria)
-│       └── providers/
-│           ├── __init__.py           # Fábrica: elige el proveedor según LLM_PROVIDER
-│           ├── base.py               # Interfaz LLMProvider, LLMResult y errores
-│           ├── anthropic_provider.py # Implementación con el SDK de Anthropic
-│           └── openai_provider.py    # Implementación con el SDK de OpenAI
-├── streamlit_app.py                  # Cliente: formulario que llama al servicio IA
-├── tests/                            # Tests de estructura, API, servicio, proveedores y cliente
+│       ├── llm_service.py            # Instructor + LiteLLM, caché, errores y logs
+│       └── cache.py                  # Caché exact-match (LRU en memoria)
+├── streamlit_app.py                  # Cliente: formulario y visualización de los datos
+├── tests/                            # Tests de schemas, prompts, servicio, API, cliente y estructura
 ├── .github/workflows/ci.yml          # Pipeline de CI
 ├── .env.example                      # Plantilla de variables de entorno
 └── pyproject.toml
@@ -105,7 +140,7 @@ estimador-cag/
 
 - Python 3.11 o superior
 - [uv](https://docs.astral.sh/uv/) para gestionar dependencias
-- Una API key de Anthropic y/o de OpenAI (solo hace falta la del proveedor activo)
+- Una API key de Anthropic y/o de OpenAI (solo hace falta la del proveedor del modelo elegido)
 
 ## Instalación
 
@@ -136,8 +171,8 @@ Las API keys se leen siempre desde `.env`. Nunca están escritas en el código, 
 
 | Variable | Descripción | Ejemplo |
 |---|---|---|
-| `LLM_PROVIDER` | Proveedor activo: `anthropic` u `openai` | `anthropic` |
-| `LLM_MODEL` | Modelo del proveedor activo | `claude-haiku-4-5` / `gpt-4o-mini` |
+| `LLM_MODEL` | Modelo en formato LiteLLM `<proveedor>/<modelo>` | `anthropic/claude-haiku-4-5` / `openai/gpt-4o-mini` |
+| `LLM_MAX_RETRIES` | Reintentos de Instructor si la respuesta no cumple el schema | `3` |
 | `ANTHROPIC_API_KEY` | API key de Anthropic | `sk-ant-...` |
 | `OPENAI_API_KEY` | API key de OpenAI | `sk-...` |
 | `APP_ENV` | Entorno; con `production` los logs salen en JSON | `development` |
@@ -150,14 +185,13 @@ Las API keys se leen siempre desde `.env`. Nunca están escritas en el código, 
 
 ### Cambiar de proveedor
 
-Para usar OpenAI, cambiá estas dos líneas en `.env` y reiniciá el servicio IA:
+Cambiá una sola línea en `.env` y reiniciá el servicio IA:
 
 ```
-LLM_PROVIDER=openai
-LLM_MODEL=gpt-4o-mini
+LLM_MODEL=openai/gpt-4o-mini
 ```
 
-`LLM_MODEL` tiene que ser un modelo del proveedor elegido.
+LiteLLM detecta el proveedor por el prefijo y el servicio usa la API key que corresponde. Instructor usa *tool calling* para obtener la salida estructurada; los modelos sugeridos (`claude-haiku-4-5` y `gpt-4o-mini`) lo soportan.
 
 ## Uso
 
@@ -179,19 +213,11 @@ En otra terminal:
 uv run streamlit run streamlit_app.py
 ```
 
-O, con el entorno virtual activado:
-
-```bash
-source .venv/bin/activate
-streamlit run streamlit_app.py
-```
-
 Se abre en el navegador en http://localhost:8501.
 
 - Escribí la descripción del proyecto, elegí el tipo, el nivel de detalle y el formato, y tocá **Estimar**.
-- El cliente valida el formulario con el mismo `EstimationRequest` del servicio antes de enviarlo.
-- El panel lateral muestra la versión del prompt, el tiempo de respuesta, los parámetros enviados y el JSON exacto que viajó al servicio.
-- Si el servicio IA no está corriendo, el cliente lo avisa con el comando para iniciarlo.
+- Arriba se muestran la duración total, el costo total y la confianza; debajo, las fases como tabla, lista o narrativa según el formato elegido.
+- El panel lateral muestra la versión del prompt, el tiempo, si la respuesta salió de la caché y el JSON enviado al servicio.
 
 ### Llamar al servicio directamente
 
@@ -201,26 +227,36 @@ curl -X POST http://127.0.0.1:8000/api/v1/estimate \
   -d '{"description": "App de reservas de turnos con login, calendario y notificaciones.", "project_type": "mobile_app", "detail_level": "medium", "output_format": "phases_table"}'
 ```
 
-Respuesta:
+Respuesta (abreviada):
 
 ```json
 {
-  "text": "## Estimación: ...",
-  "prompt_version": "v1"
+  "result": {
+    "summary": "App de reservas multiplataforma...",
+    "phases": [
+      {"name": "Discovery", "description": "...", "duration_weeks": 2, "cost_eur": 5000, "confidence_pct": 80},
+      {"name": "Build", "description": "...", "duration_weeks": 8, "cost_eur": 32000, "confidence_pct": 70}
+    ],
+    "total_duration_weeks": 10,
+    "total_cost_eur": 37000,
+    "confidence_pct": 72
+  },
+  "prompt_version": "v1",
+  "cached": false
 }
 ```
 
-Cada estimación que no sale de la caché hace una llamada real al LLM y consume crédito de la API key.
+Cada estimación que no sale de la caché hace una llamada real al LLM (más los reintentos, si los hay) y consume crédito de la API key.
 
 ### Logs
 
 Los logs aparecen en la terminal del servicio IA. Ejemplo:
 
 ```
-2026-11-05T13:20:07Z [info] llm_request_completed  cache_hit=False detail_level=medium duration_ms=8123 input_tokens=1240 model=claude-haiku-4-5 output_format=phases_table output_tokens=580 project_type=mobile_app prompt_version=v1 provider=anthropic streaming=False
+2026-11-05T13:20:07Z [info] llm_request_completed  cache_hit=False detail_level=medium duration_ms=6123 input_tokens=2240 model=anthropic/claude-haiku-4-5 output_format=phases_table output_tokens=480 project_type=mobile_app prompt_version=v1
 ```
 
-Con `APP_ENV=production` se emiten en formato JSON, listos para un sistema de logs. El texto de las descripciones nunca se registra.
+Con `APP_ENV=production` se emiten en formato JSON. El texto de las descripciones nunca se registra.
 
 ## Tests y calidad de código
 
@@ -230,7 +266,7 @@ uv run ruff format --check . # Formato
 uv run pytest -v             # Tests
 ```
 
-Los tests no llaman a ningún LLM ni levantan servidores: los proveedores y las respuestas HTTP se reemplazan por mocks, así que corren sin API keys reales y sin costo. Incluyen tests del formulario de Streamlit con `streamlit.testing`.
+Los tests no llaman a ningún LLM ni levantan servidores: el cliente de Instructor y las respuestas HTTP se reemplazan por mocks, así que corren sin API keys reales y sin costo.
 
 ## Integración continua
 
@@ -238,4 +274,4 @@ El workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) corre automá
 
 1. Linter (`ruff check`)
 2. Verificación de formato (`ruff format --check`)
-3. Tests de estructura, API, servicio, proveedores y cliente (`pytest`)
+3. Tests (`pytest`)
