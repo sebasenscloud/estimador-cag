@@ -106,6 +106,21 @@ class EstimationResponse(BaseModel):
     cached: bool
 
 
+class AttachmentInfo(BaseModel):
+    filename: str
+    strategy: str
+    extracted_chars: int
+    truncated: bool
+    warning: str | None = None
+
+
+class SessionEstimationResponse(BaseModel):
+    session_id: str
+    result: EstimationResult
+    prompt_version: str
+    attachments: list[AttachmentInfo]
+
+
 class EstimationStreamEvent(BaseModel):
     """Una línea del stream NDJSON de POST /api/v1/estimate/stream.
 

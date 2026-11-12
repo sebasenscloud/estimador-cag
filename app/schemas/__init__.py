@@ -4,6 +4,7 @@ from app.schemas.estimation import (
     OUT_OF_SCOPE_PREFIX,
     OUTPUT_FORMAT_LABELS,
     PROJECT_TYPE_LABELS,
+    AttachmentInfo,
     DetailLevel,
     EstimationRequest,
     EstimationResponse,
@@ -12,6 +13,7 @@ from app.schemas.estimation import (
     OutputFormat,
     Phase,
     ProjectType,
+    SessionEstimationResponse,
 )
 
 __all__ = [
@@ -20,6 +22,7 @@ __all__ = [
     "OUTPUT_FORMAT_LABELS",
     "OUT_OF_SCOPE_PREFIX",
     "PROJECT_TYPE_LABELS",
+    "AttachmentInfo",
     "DetailLevel",
     "EstimationRequest",
     "EstimationResponse",
@@ -28,4 +31,5 @@ __all__ = [
     "OutputFormat",
     "Phase",
     "ProjectType",
+    "SessionEstimationResponse",
 ]

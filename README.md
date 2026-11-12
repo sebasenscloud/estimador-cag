@@ -137,6 +137,66 @@ Guardrails de salida:
 - **Fix · retry** (`model_validator` en `EstimationResult`): los totales tienen que cerrar con las fases, y si `confidence_pct` es menor a 40, el `summary` tiene que empezar con `"Out of scope:"`. Así el modelo declara él mismo cuándo no puede estimar en lugar de inventar números.
 - **Filter** (`enforce_scope_response`): si el modelo declaró *out of scope*, o el proyecto supera `SCOPE_MAX_WEEKS`, se devuelve un `EstimationResult` con la forma de siempre y el prefijo en el `summary` (HTTP 200). Cada disparo queda en los logs como `guardrail_triggered` con su política y motivo.
 
+## Sesiones y adjuntos
+
+### Sesiones
+
+`POST /api/v1/sessions` crea una sesión vacía y devuelve `{"session_id": "<uuid4>"}`. El cliente reenvía ese id en cada petición posterior.
+
+Cada sesión (`app/sessions.py`) separa:
+
+- **Historial** (`ConversationHistory`): el array `messages` que viaja a la API, con ventana deslizante de `SESSION_MAX_TURNS` turnos. El system prompt se preserva siempre.
+- **Memoria** (`ProjectMetadata`): hechos del proyecto (nombre, tamaño de equipo, tecnologías, alcance) que se conservan aunque la ventana descarte turnos.
+
+Las sesiones viven en un diccionario del proceso: se pierden al reiniciar el servicio. Es una decisión consciente para esta fase (ver el docstring de `app/sessions.py`).
+
+### Estimar con adjuntos
+
+`POST /api/v1/sessions/{session_id}/estimate` recibe `multipart/form-data`:
+
+| Campo | Tipo | Notas |
+|---|---|---|
+| `transcript` | texto | La transcripción de la reunión (20 a 2000 caracteres) |
+| `project_type` | enum | Obligatorio |
+| `detail_level` | enum | Opcional, por defecto `medium` |
+| `output_format` | enum | Opcional, por defecto `phases_table` |
+| `attachments` | archivos | Opcional, PDF o Word (`.docx`), hasta `ATTACHMENT_MAX_FILES` |
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/sessions/<session_id>/estimate \
+  -F "transcript=El cliente quiere una app de turnos para su cadena de peluquerías." \
+  -F "project_type=mobile_app" \
+  -F "attachments=@requisitos.pdf" \
+  -F "attachments=@minuta.docx"
+```
+
+JSON y archivos no pueden viajar en el mismo body, por eso los campos tipados llegan como campos de formulario. FastAPI los valida igual (los enums rechazan valores desconocidos con 422) y el endpoint arma con ellos el mismo `EstimationRequest` de siempre.
+
+### Camino elegido para los adjuntos: B (extracción local)
+
+El texto se extrae en el servicio IA (`pypdf` para PDF, `python-docx` para Word) y se concatena a la transcripción con un separador:
+
+```
+<transcripción>
+
+--- attachment: requisitos.pdf ---
+<texto del PDF>
+
+--- attachment: minuta.docx ---
+<texto del Word>
+```
+
+Por qué B:
+
+- **Independiente del proveedor:** el LLM solo recibe texto, así que funciona igual con cualquier modelo detrás de LiteLLM.
+- **Control y observabilidad:** sabemos exactamente qué texto entra al prompt, podemos recortarlo (`ATTACHMENT_MAX_CHARS`) y medirlo en los logs.
+- **Testeable sin API:** la extracción se prueba con archivos generados en los tests.
+- **Prepara RAG:** el texto extraído es lo que en el módulo 3 se va a trocear (chunking) e indexar.
+
+Limitaciones conocidas: no ve imágenes, gráficos ni el diseño del documento, y un PDF escaneado no tiene texto extraíble (la respuesta lo avisa en `attachments[].warning`).
+
+**Preparado para el camino A (multimodal directo):** todo pasa por la interfaz `AttachmentProcessor` en `app/attachments/__init__.py`, elegida con `ATTACHMENT_STRATEGY`. Sumar el camino A es agregar un procesador que suba el archivo a la Files API del proveedor y lo referencie en el bloque de contenido del mensaje, sin cambiar el endpoint.
+
 ## Estructura
 
 ```
@@ -209,6 +269,11 @@ Las API keys se leen siempre desde `.env`. Nunca están escritas en el código, 
 | `LOG_LEVEL` | Nivel de logs | `info` |
 | `MAX_TOKENS` | Largo máximo de la respuesta | `16000` |
 | `CACHE_MAX_ENTRIES` | Respuestas que guarda la caché | `128` |
+| `SESSION_MAX_TURNS` | Turnos que conserva la ventana deslizante de cada sesión | `6` |
+| `ATTACHMENT_STRATEGY` | Camino para procesar adjuntos (`local_text` = B) | `local_text` |
+| `ATTACHMENT_MAX_FILES` | Adjuntos por petición | `5` |
+| `ATTACHMENT_MAX_BYTES` | Tamaño máximo por adjunto | `10485760` |
+| `ATTACHMENT_MAX_CHARS` | Caracteres de texto extraídos por adjunto | `20000` |
 | `SCOPE_MAX_WEEKS` | Duración máxima antes de considerar el pedido fuera de scope | `104` |
 | `PROMPT_VERSION` | Versión de las plantillas en `app/prompts/estimation/` | `v1` |
 | `ESTIMATOR_API_URL` | Dirección del servicio IA que usa el cliente | `http://127.0.0.1:8000` |
