@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     # Output guardrail: proyectos más largos que esto se consideran fuera de scope.
     scope_max_weeks: int = 104
     prompt_version: str = "v1"
+    # Sesiones: turnos (user + assistant) que conserva la ventana deslizante.
+    session_max_turns: int = 6
     estimator_api_url: str = "http://127.0.0.1:8000"
     estimator_api_timeout: float = 300.0
 
