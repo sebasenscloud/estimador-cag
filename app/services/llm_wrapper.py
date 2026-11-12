@@ -25,10 +25,24 @@ class InvalidLLMOutputError(Exception):
     """El modelo no devolvió datos válidos ni siquiera después de los reintentos."""
 
 
+def _completion(*args, **kwargs):
+    """`litellm.completion` adaptado para el cliente síncrono de Instructor.
+
+    En streaming, LiteLLM devuelve un CustomStreamWrapper que implementa a la
+    vez `__iter__` y `__aiter__`. Instructor lo detecta como iterador asíncrono
+    y devuelve un generador async, que no se puede recorrer con un `for`
+    normal. Envolverlo en un generador síncrono evita esa ambigüedad.
+    """
+    response = litellm.completion(*args, **kwargs)
+    if kwargs.get("stream"):
+        return (chunk for chunk in response)
+    return response
+
+
 @lru_cache
 def get_client() -> instructor.Instructor:
     """Instructor sobre LiteLLM: una sola interfaz tipada para todos los proveedores."""
-    return instructor.from_litellm(litellm.completion)
+    return instructor.from_litellm(_completion)
 
 
 def provider_name(model: str) -> str:

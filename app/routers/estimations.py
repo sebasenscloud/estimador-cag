@@ -8,6 +8,8 @@ from app.schemas import EstimationRequest, EstimationResponse, EstimationStreamE
 from app.services import estimation
 from app.services.llm_wrapper import InvalidLLMOutputError, LLMProviderError
 
+logger = structlog.get_logger()
+
 router = APIRouter(prefix="/api/v1", tags=["estimations"])
 
 
@@ -52,6 +54,11 @@ def estimate_stream(request: EstimationRequest) -> StreamingResponse:
                 yield _error_line(str(error))
             except LLMProviderError:
                 yield _error_line("Error al comunicarse con el proveedor de LLM.")
+            except Exception:
+                # El stream ya devolvió 200: un error inesperado tiene que llegar
+                # como evento, o el cliente vería un stream cortado sin explicación.
+                logger.exception("stream_unexpected_error")
+                yield _error_line("Error interno del servicio IA.")
 
     return StreamingResponse(ndjson(), media_type="application/x-ndjson")
 
