@@ -10,6 +10,7 @@ from app.schemas import (
 )
 from app.services import estimation
 from app.services.llm_wrapper import InvalidLLMOutputError
+from tests.conftest import llm_call
 
 REQUEST = EstimationRequest(
     description="El cliente necesita una app de turnos con login y calendario.",
@@ -23,9 +24,9 @@ REQUEST = EstimationRequest(
 def llm_calls(monkeypatch, estimation_result):
     calls = []
 
-    def fake_generate_structured(system_prompt, user_message, response_model):
+    def fake_generate_structured(system_prompt, user_message, response_model, **kwargs):
         calls.append((system_prompt, user_message, response_model))
-        return estimation_result
+        return llm_call(estimation_result)
 
     monkeypatch.setattr(estimation, "generate_structured", fake_generate_structured)
     estimation.cache.clear()
@@ -84,7 +85,7 @@ def test_output_guardrail_runs_before_caching(llm_calls, monkeypatch):
 
 
 def test_failures_are_not_cached(monkeypatch):
-    def failing(system_prompt, user_message, response_model):
+    def failing(system_prompt, user_message, response_model, **kwargs):
         raise InvalidLLMOutputError("la suma no cierra")
 
     monkeypatch.setattr(estimation, "generate_structured", failing)
@@ -139,9 +140,9 @@ def test_stream_falls_back_to_retry_when_final_partial_is_invalid(
 
     fallback_calls = []
 
-    def fake_generate_structured(system_prompt, user_message, response_model):
+    def fake_generate_structured(system_prompt, user_message, response_model, **kwargs):
         fallback_calls.append(response_model)
-        return estimation_result
+        return llm_call(estimation_result)
 
     monkeypatch.setattr(estimation, "stream_structured", fake_stream_structured)
     monkeypatch.setattr(estimation, "generate_structured", fake_generate_structured)

@@ -14,7 +14,7 @@ import structlog
 
 from app.config import settings
 from app.prompts.loader import render_metadata_extraction_prompt
-from app.schemas import EstimationResult
+from app.schemas import EstimationResult, LLMCallMetrics
 from app.services.llm_wrapper import (
     InvalidLLMOutputError,
     LLMProviderError,
@@ -29,7 +29,8 @@ def extract_project_metadata(
     current: ProjectMetadata,
     turn_content: list[dict],
     estimation: EstimationResult,
-) -> ProjectMetadata:
+) -> tuple[ProjectMetadata, LLMCallMetrics | None]:
+    """Devuelve la ficha actualizada y las métricas de la llamada (None si falló)."""
     system_prompt, header = render_metadata_extraction_prompt(
         current, version=settings.prompt_version
     )
@@ -55,7 +56,9 @@ def extract_project_metadata(
     ]
 
     try:
-        updated = generate_structured_from_messages(messages, ProjectMetadata)
+        call = generate_structured_from_messages(
+            messages, ProjectMetadata, purpose="metadata_extraction"
+        )
     except (InvalidLLMOutputError, LLMProviderError) as error:
         logger.warning(
             "metadata_extraction_failed",
@@ -63,11 +66,12 @@ def extract_project_metadata(
             error_type=type(error).__name__,
             error=str(error),
         )
-        return current
+        return current, None
 
+    updated = call.result
     logger.info(
         "metadata_extracted",
         changed=updated != current,
         technologies=len(updated.mentioned_technologies),
     )
-    return updated
+    return updated, call.metrics

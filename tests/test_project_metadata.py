@@ -7,6 +7,7 @@ from app.schemas import DetailLevel, EstimationRequest, OutputFormat, ProjectTyp
 from app.services import metadata_extractor, session_estimation
 from app.services.llm_wrapper import LLMProviderError
 from app.sessions import ProjectMetadata, session_store
+from tests.conftest import llm_call
 
 client = TestClient(app)
 
@@ -66,20 +67,21 @@ def test_extractor_sends_current_metadata_turn_and_estimation(
 ):
     sent = {}
 
-    def fake_generate(messages, response_model):
+    def fake_generate(messages, response_model, **kwargs):
         sent.update(messages=messages, response_model=response_model)
-        return KNOWN
+        return llm_call(KNOWN, purpose="metadata_extraction")
 
     monkeypatch.setattr(
         metadata_extractor, "generate_structured_from_messages", fake_generate
     )
     turn = [{"type": "text", "text": "Usamos Flutter y Stripe"}]
 
-    updated = metadata_extractor.extract_project_metadata(
+    updated, metrics = metadata_extractor.extract_project_metadata(
         ProjectMetadata(project_name="Turnito"), turn, estimation_result
     )
 
     assert updated == KNOWN
+    assert metrics.purpose == "metadata_extraction"
     assert sent["response_model"] is ProjectMetadata
     content = sent["messages"][1]["content"]
     assert '"project_name": "Turnito"' in content[0]["text"]
@@ -88,26 +90,27 @@ def test_extractor_sends_current_metadata_turn_and_estimation(
 
 
 def test_extractor_failure_keeps_the_previous_metadata(monkeypatch, estimation_result):
-    def failing(messages, response_model):
+    def failing(messages, response_model, **kwargs):
         raise LLMProviderError("timeout")
 
     monkeypatch.setattr(
         metadata_extractor, "generate_structured_from_messages", failing
     )
 
-    updated = metadata_extractor.extract_project_metadata(
+    updated, metrics = metadata_extractor.extract_project_metadata(
         KNOWN, [{"type": "text", "text": "hola"}], estimation_result
     )
 
     assert updated == KNOWN
+    assert metrics is None
 
 
 def test_session_turns_carry_metadata_forward(monkeypatch, estimation_result):
     prompts = []
 
-    def fake_generate(messages, response_model):
+    def fake_generate(messages, response_model, **kwargs):
         prompts.append(messages[0]["content"])
-        return estimation_result
+        return llm_call(estimation_result)
 
     extracted = iter([ProjectMetadata(project_name="Turnito"), KNOWN])
     monkeypatch.setattr(
@@ -116,7 +119,7 @@ def test_session_turns_carry_metadata_forward(monkeypatch, estimation_result):
     monkeypatch.setattr(
         session_estimation,
         "extract_project_metadata",
-        lambda current, turn_content, estimation: next(extracted),
+        lambda current, turn_content, estimation: (next(extracted), None),
     )
     session_id = client.post("/api/v1/sessions").json()["session_id"]
     form = {"transcript": REQUEST.description, "project_type": "mobile_app"}

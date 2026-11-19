@@ -18,6 +18,7 @@ from app.config import settings
 from app.main import app
 from app.services import session_estimation
 from app.sessions import session_store
+from tests.conftest import llm_call
 
 client = TestClient(app)
 
@@ -210,10 +211,10 @@ def prompts_sent(monkeypatch, estimation_result):
     """Guarda el `content` del mensaje user que se le manda al modelo."""
     sent = []
 
-    def fake_generate(messages, response_model):
+    def fake_generate(messages, response_model, **kwargs):
         assert [message["role"] for message in messages] == ["system", "user"]
         sent.append(messages[1]["content"])
-        return estimation_result
+        return llm_call(estimation_result)
 
     monkeypatch.setattr(
         session_estimation, "generate_structured_from_messages", fake_generate
@@ -221,7 +222,7 @@ def prompts_sent(monkeypatch, estimation_result):
     monkeypatch.setattr(
         session_estimation,
         "extract_project_metadata",
-        lambda current, turn_content, estimation: current,
+        lambda current, turn_content, estimation: (current, None),
     )
     return sent
 

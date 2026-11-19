@@ -17,6 +17,7 @@ from app.main import app
 from app.schemas import EstimationResult
 from app.services import metadata_extractor, session_estimation
 from app.sessions import ProjectMetadata, session_store
+from tests.conftest import llm_call
 from tests.test_attachments import make_pdf
 
 BASE_COST = 20_000
@@ -41,7 +42,7 @@ class FakeLLM:
     def __init__(self):
         self.estimation_calls: list[list[dict]] = []
 
-    def estimate(self, messages, response_model):
+    def estimate(self, messages, response_model, **kwargs):
         assert response_model is EstimationResult
         self.estimation_calls.append(messages)
         current_user = message_text([messages[-1]]).lower()
@@ -65,17 +66,19 @@ class FakeLLM:
                     "confidence_pct": 75,
                 }
             )
-        return EstimationResult.model_validate(
-            {
-                "summary": "App de turnos para peluquerías.",
-                "phases": phases,
-                "total_duration_weeks": sum(p["duration_weeks"] for p in phases),
-                "total_cost_eur": sum(p["cost_eur"] for p in phases),
-                "confidence_pct": 80,
-            }
+        return llm_call(
+            EstimationResult.model_validate(
+                {
+                    "summary": "App de turnos para peluquerías.",
+                    "phases": phases,
+                    "total_duration_weeks": sum(p["duration_weeks"] for p in phases),
+                    "total_cost_eur": sum(p["cost_eur"] for p in phases),
+                    "confidence_pct": 80,
+                }
+            )
         )
 
-    def extract(self, messages, response_model):
+    def extract(self, messages, response_model, **kwargs):
         assert response_model is ProjectMetadata
         # Solo el mensaje user: el system del extractor nombra tecnologías de ejemplo.
         text = message_text(messages[1:])
@@ -90,14 +93,17 @@ class FakeLLM:
                 technologies.append(tech)
         name = re.search(r"se llama (\w+)", text)
         team = re.search(r"equipo de (\d+)", text)
-        return current.model_copy(
-            update={
-                "project_name": name[1] if name else current.project_name,
-                "assumed_team_size": int(team[1])
-                if team
-                else current.assumed_team_size,
-                "mentioned_technologies": technologies,
-            }
+        return llm_call(
+            current.model_copy(
+                update={
+                    "project_name": name[1] if name else current.project_name,
+                    "assumed_team_size": int(team[1])
+                    if team
+                    else current.assumed_team_size,
+                    "mentioned_technologies": technologies,
+                }
+            ),
+            purpose="metadata_extraction",
         )
 
 
@@ -168,6 +174,12 @@ async def test_session_links_two_requests_and_updates_metadata(client, fake_llm)
     assert second["project_metadata"]["project_name"] == "Turnito"
     assert second["project_metadata"]["assumed_team_size"] == 3
     assert second["project_metadata"]["mentioned_technologies"] == ["Flutter", "Stripe"]
+    # Cada turno informa las métricas de sus dos llamadas al LLM.
+    assert [call["purpose"] for call in second["llm_calls"]] == [
+        "estimation",
+        "metadata_extraction",
+    ]
+    assert all(call["cost_usd"] is not None for call in second["llm_calls"])
     # Y la memoria del turno 1 llegó al modelo en el system prompt del turno 2.
     second_system = fake_llm.estimation_calls[1][0]["content"]
     assert "Nombre del proyecto: Turnito" in second_system

@@ -137,6 +137,20 @@ Guardrails de salida:
 - **Fix · retry** (`model_validator` en `EstimationResult`): los totales tienen que cerrar con las fases, y si `confidence_pct` es menor a 40, el `summary` tiene que empezar con `"Out of scope:"`. Así el modelo declara él mismo cuándo no puede estimar en lugar de inventar números.
 - **Filter** (`enforce_scope_response`): si el modelo declaró *out of scope*, o el proyecto supera `SCOPE_MAX_WEEKS`, se devuelve un `EstimationResult` con la forma de siempre y el prefijo en el `summary` (HTTP 200). Cada disparo queda en los logs como `guardrail_triggered` con su política y motivo.
 
+## Observabilidad del wrapper LLM
+
+Cada llamada del wrapper (`app/services/llm_wrapper.py`) devuelve un `LLMCall` con el resultado validado y sus métricas (`LLMCallMetrics`):
+
+| Campo | Qué es |
+|---|---|
+| `purpose` | Para qué se hizo la llamada (`estimation`, `metadata_extraction`) |
+| `model` / `provider` | Modelo usado y proveedor detectado por LiteLLM |
+| `latency_ms` | Duración de la llamada, incluidos los reintentos de Instructor |
+| `tokens_in` / `tokens_out` | Tokens informados por el proveedor |
+| `cost_usd` | Costo calculado con la tabla `MODEL_COSTS` (USD por millón de tokens de entrada y de salida) |
+
+Las métricas se registran en el log `llm_request_completed`, y los turnos de sesión las devuelven en `llm_calls` (una entrada por cada llamada del turno). Si un modelo no está en `MODEL_COSTS`, `cost_usd` es `null`: hay que agregarlo a la tabla.
+
 ## Sesiones y adjuntos
 
 ### Sesiones

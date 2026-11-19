@@ -63,7 +63,35 @@ def test_asks_instructor_for_the_response_model_with_retries(fake_completions):
 
 
 def test_returns_the_validated_result(fake_completions, estimation_result):
-    assert generate() == estimation_result
+    assert generate().result == estimation_result
+
+
+def test_every_call_returns_its_metrics(fake_completions):
+    metrics = llm_wrapper.generate_structured(
+        SYSTEM_PROMPT, USER_MESSAGE, EstimationResult, purpose="estimation"
+    ).metrics
+
+    assert metrics.purpose == "estimation"
+    assert metrics.model == "anthropic/claude-haiku-4-5"
+    assert metrics.provider == "anthropic"
+    assert metrics.latency_ms >= 0
+    assert (metrics.tokens_in, metrics.tokens_out) == (1200, 300)
+    # claude-haiku-4-5: 1 USD por millón de entrada y 5 USD por millón de salida
+    assert metrics.cost_usd == pytest.approx(1200 * 1 / 1e6 + 300 * 5 / 1e6)
+
+
+@pytest.mark.parametrize(
+    ("model", "tokens_in", "tokens_out", "expected"),
+    [
+        ("anthropic/claude-haiku-4-5", 1_000_000, 1_000_000, 6.0),
+        ("openai/gpt-4o-mini", 1_000_000, 0, 0.15),
+        ("gpt-4o-mini", 0, 1_000_000, 0.60),
+        ("anthropic/modelo-desconocido", 1000, 1000, None),
+        ("anthropic/claude-haiku-4-5", None, 100, None),
+    ],
+)
+def test_estimate_cost_uses_model_costs(model, tokens_in, tokens_out, expected):
+    assert llm_wrapper.estimate_cost(model, tokens_in, tokens_out) == expected
 
 
 def test_missing_api_key_raises_provider_error(fake_completions, monkeypatch):

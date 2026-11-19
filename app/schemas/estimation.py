@@ -3,6 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.llm import LLMCallMetrics
 from app.sessions import ProjectMetadata
 
 # Debajo de esta confianza, el modelo tiene que declarar que no puede estimar.
@@ -125,6 +126,8 @@ class SessionEstimationResponse(BaseModel):
     project_metadata: ProjectMetadata
     prompt_version: str
     attachments: list[AttachmentInfo]
+    # Una entrada por llamada al LLM del turno (estimación y extracción de metadata).
+    llm_calls: list[LLMCallMetrics] = []
 
 
 class EstimationStreamEvent(BaseModel):

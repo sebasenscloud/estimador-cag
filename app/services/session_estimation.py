@@ -84,10 +84,15 @@ def _run_turn(
         {"role": "user", "content": user_content},
     ]
 
-    result = generate_structured_from_messages(messages, EstimationResult)
-    result = enforce_scope_response(result)
+    estimation_call = generate_structured_from_messages(messages, EstimationResult)
+    result = enforce_scope_response(estimation_call.result)
 
-    session.metadata = extract_project_metadata(session.metadata, user_content, result)
+    session.metadata, extraction_metrics = extract_project_metadata(
+        session.metadata, user_content, result
+    )
+    llm_calls = [estimation_call.metrics]
+    if extraction_metrics is not None:
+        llm_calls.append(extraction_metrics)
 
     # Al historial va el texto del turno, no el de los adjuntos: su contenido ya
     # quedó destilado en project_metadata y así no infla los turnos siguientes.
@@ -102,6 +107,7 @@ def _run_turn(
         attachment_chars=sum(item.extracted_chars for item in processed),
         out_of_scope=result.is_out_of_scope,
         history_turns=session.history.turn_count,
+        turn_cost_usd=_total_cost(llm_calls),
     )
     return SessionEstimationResponse(
         session_id=session.session_id,
@@ -110,7 +116,13 @@ def _run_turn(
         project_metadata=session.metadata,
         prompt_version=settings.prompt_version,
         attachments=[_info(item) for item in processed],
+        llm_calls=llm_calls,
     )
+
+
+def _total_cost(calls: list) -> float | None:
+    costs = [call.cost_usd for call in calls]
+    return None if None in costs else round(sum(costs), 6)
 
 
 def _cleanup(processed: list[ProcessedAttachment]) -> None:

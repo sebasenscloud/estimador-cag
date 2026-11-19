@@ -1,7 +1,24 @@
 import pytest
 
-from app.schemas import EstimationResult
+from app.schemas import EstimationResult, LLMCallMetrics
 from app.services import llm_wrapper
+from app.services.llm_wrapper import LLMCall
+
+
+def llm_call(result, purpose: str = "estimation") -> LLMCall:
+    """Envuelve un resultado falso como lo devuelve el wrapper real."""
+    return LLMCall(
+        result=result,
+        metrics=LLMCallMetrics(
+            purpose=purpose,
+            model="anthropic/claude-haiku-4-5",
+            provider="anthropic",
+            latency_ms=1200,
+            tokens_in=2000,
+            tokens_out=500,
+            cost_usd=0.0045,
+        ),
+    )
 
 
 @pytest.fixture(autouse=True)

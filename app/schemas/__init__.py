@@ -15,6 +15,7 @@ from app.schemas.estimation import (
     ProjectType,
     SessionEstimationResponse,
 )
+from app.schemas.llm import LLMCallMetrics
 
 __all__ = [
     "DETAIL_LEVEL_LABELS",
@@ -28,6 +29,7 @@ __all__ = [
     "EstimationResponse",
     "EstimationResult",
     "EstimationStreamEvent",
+    "LLMCallMetrics",
     "OutputFormat",
     "Phase",
     "ProjectType",

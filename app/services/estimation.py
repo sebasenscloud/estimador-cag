@@ -60,7 +60,7 @@ def estimate(request: EstimationRequest) -> EstimationResponse:
     )
 
     # 4. LLM + Instructor (fix · retry)
-    result = generate_structured(system_prompt, user_message, EstimationResult)
+    result = generate_structured(system_prompt, user_message, EstimationResult).result
 
     # 5. Output guardrail (filter)
     result = enforce_scope_response(result)
@@ -103,7 +103,9 @@ def stream_estimate(request: EstimationRequest) -> Iterator[EstimationStreamEven
         )
     except ValidationError:
         logger.warning("stream_result_invalid", fallback="generate_structured")
-        result = generate_structured(system_prompt, user_message, EstimationResult)
+        result = generate_structured(
+            system_prompt, user_message, EstimationResult
+        ).result
 
     # 5. Output guardrail (filter)
     result = enforce_scope_response(result)

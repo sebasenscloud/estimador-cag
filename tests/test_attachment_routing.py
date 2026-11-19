@@ -8,6 +8,7 @@ from app.config import settings
 from app.main import app
 from app.services import session_estimation
 from app.services.llm_wrapper import InvalidLLMOutputError
+from tests.conftest import llm_call
 from tests.test_attachments import REQUIREMENTS, make_image_only_pdf, make_pdf
 
 client = TestClient(app)
@@ -114,9 +115,9 @@ def test_uploaded_files_are_deleted_after_the_turn(
 ):
     sent = []
 
-    def fake_generate(messages, response_model):
+    def fake_generate(messages, response_model, **kwargs):
         sent.append(messages[-1]["content"])
-        return estimation_result
+        return llm_call(estimation_result)
 
     monkeypatch.setattr(
         session_estimation, "generate_structured_from_messages", fake_generate
@@ -124,7 +125,7 @@ def test_uploaded_files_are_deleted_after_the_turn(
     monkeypatch.setattr(
         session_estimation,
         "extract_project_metadata",
-        lambda current, turn_content, estimation: current,
+        lambda current, turn_content, estimation: (current, None),
     )
 
     response = post_scanned_pdf(session_id)
@@ -143,7 +144,7 @@ def test_uploaded_files_are_deleted_after_the_turn(
 def test_uploaded_files_are_deleted_even_if_the_turn_fails(
     fake_files_api, session_id, monkeypatch
 ):
-    def failing(messages, response_model):
+    def failing(messages, response_model, **kwargs):
         raise InvalidLLMOutputError("la suma no cierra")
 
     monkeypatch.setattr(
@@ -162,12 +163,12 @@ def test_text_pdf_never_touches_the_files_api(
     monkeypatch.setattr(
         session_estimation,
         "generate_structured_from_messages",
-        lambda messages, response_model: estimation_result,
+        lambda messages, response_model, **kwargs: llm_call(estimation_result),
     )
     monkeypatch.setattr(
         session_estimation,
         "extract_project_metadata",
-        lambda current, turn_content, estimation: current,
+        lambda current, turn_content, estimation: (current, None),
     )
 
     response = client.post(

@@ -5,6 +5,7 @@ from app.main import app
 from app.services import session_estimation
 from app.services.llm_wrapper import InvalidLLMOutputError
 from app.sessions import ProjectMetadata, session_store
+from tests.conftest import llm_call
 from tests.test_attachments import make_docx
 
 client = TestClient(app)
@@ -20,9 +21,9 @@ def llm_messages(monkeypatch, estimation_result):
     """Guarda el array `messages` de cada llamada al estimador."""
     calls = []
 
-    def fake_generate(messages, response_model):
+    def fake_generate(messages, response_model, **kwargs):
         calls.append(messages)
-        return estimation_result
+        return llm_call(estimation_result)
 
     monkeypatch.setattr(
         session_estimation, "generate_structured_from_messages", fake_generate
@@ -30,8 +31,9 @@ def llm_messages(monkeypatch, estimation_result):
     monkeypatch.setattr(
         session_estimation,
         "extract_project_metadata",
-        lambda current, turn_content, estimation: ProjectMetadata(
-            project_name="Turnito"
+        lambda current, turn_content, estimation: (
+            ProjectMetadata(project_name="Turnito"),
+            None,
         ),
     )
     return calls
@@ -105,7 +107,7 @@ def test_attachment_text_is_not_stored_in_the_history(llm_messages):
 def test_failed_turn_is_not_stored(monkeypatch, llm_messages):
     session_id = new_session()
 
-    def failing(messages, response_model):
+    def failing(messages, response_model, **kwargs):
         raise InvalidLLMOutputError("la suma no cierra")
 
     monkeypatch.setattr(
