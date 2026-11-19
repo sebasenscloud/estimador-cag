@@ -440,6 +440,18 @@ Tres reglas de oro:
 
 `evals/dataset.py` valida cada caso con Pydantic (`GoldenCase`) y `load_dataset()` los carga. Las expectativas son opcionales: un caso solo evalúa lo que declara (`expected_out_of_scope`, `expected_tier`, rangos de fases, costo y semanas, términos y tecnologías). `tests/test_golden_dataset.py` lo corre en CI sin llamar al LLM.
 
+### Tres métricas binarias y deterministas
+
+`evals/metrics.py` (portado del curso) evalúa cada par (caso, estimación) sin LLM y dice por qué falló:
+
+| Métrica | Qué verifica |
+|---|---|
+| `schema_adherence` | Las fases suman el total, hay prefijo `Out of scope:` si la confianza es baja, la cantidad de fases está en rango |
+| `cost_bounds` | Costo y semanas en rango; un caso fuera de scope sale declarado como tal |
+| `content_recall` | Aparecen los términos esperados y al menos una de las tecnologías |
+
+`schema_adherence` repite lo que ya garantizan Instructor y los validadores a propósito: si un cambio borra un validador, la eval lo detecta. Una diferencia con el curso: allí un caso fuera de scope espera costo 0 y 1 semana; nuestro contrato pide el prefijo `Out of scope:` y una única fase de relevamiento, y eso es lo que verifica `cost_bounds`. El umbral de confianza baja es el del proyecto (`LOW_CONFIDENCE_PCT = 40`; el curso usa 30).
+
 ## Estructura
 
 ```
