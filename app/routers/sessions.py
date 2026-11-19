@@ -6,6 +6,7 @@ from pydantic import BaseModel, ValidationError
 from starlette.concurrency import run_in_threadpool
 
 from app.attachments import Attachment, AttachmentError
+from app.guardrails.input import InputGuardrailViolation, guardrail_detail
 from app.schemas import (
     DetailLevel,
     EstimationRequest,
@@ -82,6 +83,8 @@ async def estimate_in_session(
             return await run_in_threadpool(
                 session_estimation.estimate_in_session, session_id, request, files
             )
+        except InputGuardrailViolation as error:
+            raise HTTPException(status_code=400, detail=guardrail_detail(error))
         except SessionNotFoundError as error:
             raise HTTPException(status_code=404, detail=str(error))
         except AttachmentError as error:

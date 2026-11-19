@@ -4,6 +4,7 @@ import structlog
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
+from app.guardrails.input import InputGuardrailViolation, check_input, guardrail_detail
 from app.schemas import EstimationRequest, EstimationResponse, EstimationStreamEvent
 from app.services import estimation
 from app.services.llm_wrapper import InvalidLLMOutputError, LLMProviderError
@@ -23,6 +24,8 @@ def estimate(request: EstimationRequest) -> EstimationResponse:
     ):
         try:
             return estimation.estimate(request)
+        except InputGuardrailViolation as error:
+            raise HTTPException(status_code=400, detail=guardrail_detail(error))
         except InvalidLLMOutputError as error:
             raise HTTPException(status_code=502, detail=str(error))
         except LLMProviderError:
@@ -39,6 +42,11 @@ def estimate_stream(request: EstimationRequest) -> StreamingResponse:
     Como el status 200 se envía al empezar el stream, los errores posteriores
     llegan como un evento `{"type": "error"}` en lugar de un código HTTP.
     """
+    try:
+        check_input(request.description)
+    except InputGuardrailViolation as error:
+        raise HTTPException(status_code=400, detail=guardrail_detail(error))
+
     log_context = {
         "project_type": request.project_type.value,
         "detail_level": request.detail_level.value,

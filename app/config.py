@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     log_level: str = "info"
     max_tokens: int = 16000
     cache_max_entries: int = 128
+    # Input guardrail: moderación de OpenAI (necesita OPENAI_API_KEY; si falta, se salta).
+    moderation_enabled: bool = True
+    moderation_model: str = "omni-moderation-latest"
     # Output guardrail: proyectos más largos que esto se consideran fuera de scope.
     scope_max_weeks: int = 104
     # v2 agrega el bloque <audience> que cambia según el tier resuelto.

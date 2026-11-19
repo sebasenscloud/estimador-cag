@@ -28,6 +28,7 @@ from app.attachments import (
 )
 from app.compression import apply_compression
 from app.config import settings
+from app.guardrails.input import check_input
 from app.guardrails.output import enforce_scope_response
 from app.prompts.loader import render_estimation_prompt
 from app.schemas import (
@@ -65,11 +66,25 @@ def estimate_in_session(
                 reason=item.reason,
                 extracted_chars=item.extracted_chars,
             )
+        # Guardrail de entrada sobre el turno completo: el texto del usuario y el
+        # texto extraído de los adjuntos (camino B). Los PDFs que viajan por el
+        # camino multimodal no se pueden revisar en local.
+        check_input(_guardrail_text(request.description, processed))
         return _run_turn(session, request, processed)
     finally:
         # Los archivos subidos a la Files API se borran al terminar el turno,
         # haya salido bien o no: su contenido ya quedó en project_metadata.
         _cleanup(processed)
+
+
+def _guardrail_text(description: str, processed: list[ProcessedAttachment]) -> str:
+    texts = [
+        part["text"]
+        for item in processed
+        for part in item.content_parts
+        if part.get("type") == "text"
+    ]
+    return "\n\n".join([description, *texts])
 
 
 def _run_turn(

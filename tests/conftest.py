@@ -2,6 +2,7 @@ import re
 
 import pytest
 
+from app.config import settings
 from app.schemas import EstimationResult, LLMCallMetrics
 from app.services import llm_wrapper
 from app.services.llm_wrapper import LLMCall
@@ -36,6 +37,9 @@ def block_real_llm_calls(monkeypatch):
         pytest.fail("Un test intentó llamar al LLM real; simulá la llamada.")
 
     monkeypatch.setattr(llm_wrapper.litellm, "completion", forbidden)
+    # La moderación del guardrail de entrada también es una llamada real.
+    monkeypatch.setattr(llm_wrapper.litellm, "moderation", forbidden)
+    monkeypatch.setattr(settings, "moderation_enabled", False)
 
 
 @pytest.fixture(autouse=True)

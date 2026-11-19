@@ -137,6 +137,20 @@ Guardrails de salida:
 - **Fix · retry** (`model_validator` en `EstimationResult`): los totales tienen que cerrar con las fases, y si `confidence_pct` es menor a 40, el `summary` tiene que empezar con `"Out of scope:"`. Así el modelo declara él mismo cuándo no puede estimar en lugar de inventar números.
 - **Filter** (`enforce_scope_response`): si el modelo declaró *out of scope*, o el proyecto supera `SCOPE_MAX_WEEKS`, se devuelve un `EstimationResult` con la forma de siempre y el prefijo en el `summary` (HTTP 200). Cada disparo queda en los logs como `guardrail_triggered` con su política y motivo.
 
+### Guardrail de entrada: moderación, prompt injection y PII
+
+`app/guardrails/input.py` (basado en el del curso) corre tres capas **antes del cache y del LLM**, en los tres endpoints de estimación:
+
+| Capa | Cómo | Si falla |
+|---|---|---|
+| Moderación | Moderation API de OpenAI vía LiteLLM (`MODERATION_MODEL`) | Solo con `MODERATION_ENABLED` y `OPENAI_API_KEY`; si la llamada falla, deja pasar (fail open) y loguea `moderation_call_failed` |
+| Prompt injection | Regex del curso ("ignore previous instructions", `</system>`, "you are now"...) y equivalentes en español | — |
+| PII | Regex de email, IBAN y teléfono (10+ dígitos, para no marcar montos ni fechas) | — |
+
+Política **exception**, nunca fix-and-retry: la primera capa que dispara lanza `InputGuardrailViolation` y la API responde **400** con `{"reason": "moderation" | "prompt_injection" | "pii", "message": ...}`. En `/estimate/stream` se chequea antes de abrir el stream, así que también es un 400 y no un evento de error. En sesiones se revisa el texto del turno más el texto extraído de los adjuntos; el turno bloqueado no entra al historial. Los PDFs que viajan por el camino multimodal no se pueden revisar en local.
+
+Va antes del cache para que un pedido malicioso o con datos personales nunca quede guardado. En los tests la moderación está apagada y cualquier llamada real falla (`tests/conftest.py`).
+
 ## Observabilidad del wrapper LLM
 
 Cada llamada del wrapper (`app/services/llm_wrapper.py`) devuelve un `LLMCall` con el resultado validado y sus métricas (`LLMCallMetrics`):
@@ -452,6 +466,18 @@ Tres reglas de oro:
 
 `schema_adherence` repite lo que ya garantizan Instructor y los validadores a propósito: si un cambio borra un validador, la eval lo detecta. Una diferencia con el curso: allí un caso fuera de scope espera costo 0 y 1 semana; nuestro contrato pide el prefijo `Out of scope:` y una única fase de relevamiento, y eso es lo que verifica `cost_bounds`. El umbral de confianza baja es el del proyecto (`LOW_CONFIDENCE_PCT = 40`; el curso usa 30).
 
+### Correr las evals
+
+`evals/run.py` corre el dataset contra el servicio y puntúa cada caso con las tres métricas. Por defecto usa `TestClient` en el mismo proceso (no hace falta levantar el servidor); con `--http` apunta a uno real.
+
+```bash
+uv run python -m evals.run --mode actor --limit 8
+```
+
+**Llama al LLM real y tiene costo.** Cada caso usa una sesión nueva para que no se contaminen. Imprime una fila por caso y un resumen por métrica, y guarda el reporte en `evals/actor.json` (latencia, métricas, tier resuelto contra `expected_tier`, llamadas y costo en USD) para hacer diff entre corridas. Un caso que falla (502, timeout) se registra como error y la corrida sigue. Sale con código 1 si algún caso no pasa todo.
+
+Sigue al runner del curso con tres diferencias: por ahora solo hay modo `actor` (`acb` llega con Actor-Critic-Boss), un rechazo del guardrail de entrada en un caso que espera fuera de scope se puntúa como respuesta `Out of scope:` con nuestro contrato (en el curso, costo 0 / 1 semana), y el tier se registra pero no cuenta para pasar o fallar.
+
 ## Estructura
 
 ```
@@ -535,6 +561,8 @@ Las API keys se leen siempre desde `.env`. Nunca están escritas en el código, 
 | `ATTACHMENT_MAX_CHARS` | Caracteres de texto extraídos por adjunto | `20000` |
 | `SCOPE_MAX_WEEKS` | Duración máxima antes de considerar el pedido fuera de scope | `104` |
 | `PROMPT_VERSION` | Versión del prompt de estimación (`v2` agrega el bloque `<audience>`) | `v2` |
+| `MODERATION_ENABLED` | Capa de moderación del guardrail de entrada (necesita `OPENAI_API_KEY`) | `true` |
+| `MODERATION_MODEL` | Modelo de moderación de OpenAI | `omni-moderation-latest` |
 | `TIER_TECHNICAL_TERMS` | Términos técnicos distintos para resolver `developer` | `2` |
 | `TIER_SMALL_TEAM_SIZE` | Equipo máximo para resolver `pm` | `2` |
 | `ESTIMATOR_API_URL` | Dirección del servicio IA que usa el cliente | `http://127.0.0.1:8000` |

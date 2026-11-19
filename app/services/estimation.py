@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from app.cache.exact import ExactMatchCache
 from app.config import settings
+from app.guardrails.input import check_input
 from app.guardrails.output import enforce_scope_response
 from app.prompts.loader import render_estimation_prompt
 from app.schemas import (
@@ -49,6 +50,9 @@ def cache_key(request: EstimationRequest) -> str:
 
 
 def estimate(request: EstimationRequest) -> EstimationResponse:
+    # 1. Input guardrail (exception): antes del cache y del LLM
+    check_input(request.description)
+
     # 2. Cache lookup
     key = cache_key(request)
     cached = cache.get(key)
@@ -77,6 +81,8 @@ def estimate(request: EstimationRequest) -> EstimationResponse:
 
 
 def stream_estimate(request: EstimationRequest) -> Iterator[EstimationStreamEvent]:
+    # 1. Input guardrail: el router ya lo corrió antes de abrir el stream, para
+    # poder responder 400 en lugar de un evento de error.
     # 2. Cache lookup: un acierto se entrega directo como evento final
     key = cache_key(request)
     cached = cache.get(key)
