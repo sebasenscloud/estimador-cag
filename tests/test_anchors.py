@@ -123,7 +123,8 @@ def test_llm_mode_falls_back_to_rules_if_the_classifier_fails(monkeypatch):
 
 def add(history: ConversationHistory, number: int, anchor_rule=None):
     rules = [anchor_rule] if anchor_rule else []
-    return history.add_turn(f"pregunta {number}", f"respuesta {number}", rules)
+    history.append(f"pregunta {number}", f"respuesta {number}", rules)
+    return history.compact()
 
 
 def user_contents(history: ConversationHistory) -> list[str]:
@@ -138,7 +139,7 @@ def test_anchored_turn_survives_the_window():
         add(history, number)
 
     assert user_contents(history) == ["pregunta 1", "pregunta 4", "pregunta 5"]
-    assert history.anchor_count == 1
+    assert history.anchor_count == 2  # mensajes: user + assistant del turno 1
     assert history.turn_count == 2
 
 
@@ -158,14 +159,14 @@ def test_assistant_answer_travels_with_its_anchored_user_message():
     ]
 
 
-def test_non_anchored_turn_leaving_the_window_is_returned():
+def test_non_anchored_turn_leaving_the_window_goes_to_the_summary():
     history = ConversationHistory(max_turns=1)
     add(history, 1)
 
-    evicted = add(history, 2)
+    summarized = add(history, 2)
 
-    assert evicted.number == 1
-    assert evicted.user["content"] == "pregunta 1"
+    assert [turn.number for turn in summarized] == [1]
+    assert summarized[0].user["content"] == "pregunta 1"
 
 
 def test_anchors_have_their_own_limit():
@@ -176,7 +177,7 @@ def test_anchors_have_their_own_limit():
 
     # Ventana: turno 5. Anclas conservadas: las 2 más recientes que salieron (3 y 4).
     assert user_contents(history) == ["pregunta 3", "pregunta 4", "pregunta 5"]
-    assert history.anchor_count == 2
+    assert history.anchor_count == 4
 
 
 def test_session_turn_reports_and_keeps_the_anchor(monkeypatch, estimation_result):
@@ -192,6 +193,8 @@ def test_session_turn_reports_and_keeps_the_anchor(monkeypatch, estimation_resul
         lambda current, turn_content, estimation: (current, None),
     )
     session_id = client.post("/api/v1/sessions").json()["session_id"]
+    # Ventana de 1 turno: el turno anclado sale en el segundo turno.
+    session_store.get(session_id).history = ConversationHistory(max_turns=1)
     url = f"/api/v1/sessions/{session_id}/estimate"
 
     anchored = client.post(
@@ -212,7 +215,9 @@ def test_session_turn_reports_and_keeps_the_anchor(monkeypatch, estimation_resul
 
     assert anchored["anchor_rules"] == ["signed_contract"]
     assert plain["anchor_rules"] == []
-    assert debug["anchors_count"] == 1
+    # Salió de la ventana y se conserva literal: user + assistant del turno 1.
+    assert debug["anchors_count"] == 2
+    assert debug["summary_chars"] == 0
     session_store.delete(session_id)
 
 

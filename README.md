@@ -207,6 +207,41 @@ messages = system + anclas que salieron de la ventana + ventana + user actual   
 
 Cada turno informa sus reglas en `anchor_rules`, y `GET /sessions/{id}` cuenta las anclas en `anchors_count`.
 
+### Compresión híbrida: resumen + anclas + ventana
+
+| Estrategia | Qué conserva | Qué arriesga |
+|---|---|---|
+| Ventana deslizante | Los últimos N turnos | Olvida lo que se pactó al principio |
+| Resumen acumulado | Lo antiguo, condensado | Pierde la letra exacta de lo crítico |
+| Anclas | Turnos críticos, literales | Si se ancla de más, el prompt crece |
+| **Híbrida (la de este servicio)** | **Resumen + anclas + ventana** | Una llamada extra al comprimir |
+
+Lo crítico se queda **literal** (ancla), lo demás se **resume** y lo reciente sigue **vivo** en la ventana. El array que viaja al LLM:
+
+```
+[ system                                  ← regenerado con project_metadata
+  user: "[Earlier conversation summary]   ← resumen acumulado
+         ..."
+  turnos anclados (user + assistant)      ← anclas, literales
+  turnos de la ventana                    ← los últimos SESSION_MAX_TURNS
+  user actual ]
+```
+
+- **El resumen entra como `user`**, no como un segundo `system`: ya hay un system que se regenera en cada turno, y un segundo rompería el contrato. El encabezado entre corchetes le indica al modelo que es contexto.
+- **`append()` ya no recorta.** Solo agrega el turno; el servicio llama justo después a `apply_compression()` (`app/compression.py`), así queda a la vista **cuándo** se paga la llamada al LLM.
+- **Un solo resumen por pasada**, rehecho entero a partir del anterior: nada de resumen de resúmenes.
+- **Si solo salen anclas**, se mueven sin llamar al LLM.
+- **Si el summarizer falla**, no se recorta: los turnos quedan en la ventana y se reintenta en el próximo turno (log `summary_failed`). No se pierde información.
+- `SUMMARY_MODEL` permite resumir con un modelo más barato que `LLM_MODEL`. La llamada aparece en `llm_calls` con `purpose=summary` y su costo.
+
+Demo del curso, reproducida en `tests/test_compression.py` (`max_turns=6`, NDA en el turno 1):
+
+| Turno | `message_count` | `anchors_count` | Resumen | Qué pasa |
+|---|---|---|---|---|
+| 1-6 | 2 → 12 | 0 | 0 | La ventana se llena |
+| 7 | 12 | 2 | 0 | Sale el turno 1: es ancla (`nda`) |
+| 8 | 12 | 2 | > 0 | Sale el turno 2: va al resumen |
+
 ### Debug: `GET /api/v1/sessions/{session_id}`
 
 Expone cómo se está gestionando la memoria de la sesión, sin el contenido de los mensajes:
@@ -215,14 +250,14 @@ Expone cómo se está gestionando la memoria de la sesión, sin el contenido de 
 |---|---|
 | `total_turns` | Turnos completados desde que se creó la sesión |
 | `window_turns` / `max_turns` | Turnos que hoy están en la ventana deslizante y su tamaño máximo |
-| `message_count` | Mensajes user/assistant que viajan al LLM (sin contar el system) |
-| `anchors_count` | Turnos anclados que se conservan, dentro o fuera de la ventana |
-| `summary_chars` | Largo del resumen acumulativo (Sesión 6; hoy 0) |
+| `message_count` | Mensajes de la ventana (sin system, resumen ni anclas) |
+| `anchors_count` | Mensajes anclados que ya salieron de la ventana y viajan literales |
+| `summary_chars` | Largo del resumen acumulado |
 | `last_resolved_tier` / `last_tier_rule` | Tier de modelo elegido en el último turno y la regla que lo eligió (Sesión 6; hoy `null`) |
 | `project_metadata` | La memoria estructurada actual |
 | `last_llm_calls` | Métricas de las llamadas al LLM del último turno |
 
-Los campos de resumen y tier ya forman parte del contrato aunque esas piezas todavía no existan: así el endpoint no cambia de forma cuando se implementen.
+Los campos de tier ya forman parte del contrato aunque esa pieza todavía no exista: así el endpoint no cambia de forma cuando se implementen.
 
 ### `project_metadata` en el system prompt
 
@@ -426,6 +461,8 @@ Las API keys se leen siempre desde `.env`. Nunca están escritas en el código, 
 | `MAX_TOKENS` | Largo máximo de la respuesta | `16000` |
 | `CACHE_MAX_ENTRIES` | Respuestas que guarda la caché | `128` |
 | `ANCHOR_DETECTION_MODE` | Detección de anclas: `heuristic` (8 reglas) o `llm` (clasificador) | `heuristic` |
+| `SUMMARY_MODEL` | Modelo para el resumen acumulado (vacío = `LLM_MODEL`) | `anthropic/claude-haiku-4-5` |
+| `SUMMARY_MAX_CHARS` | Largo máximo que se le pide al resumen | `1500` |
 | `MAX_ANCHORS` | Turnos anclados que se conservan fuera de la ventana | `5` |
 | `SESSION_MAX_TURNS` | Turnos que conserva la ventana deslizante de cada sesión | `6` |
 | `ATTACHMENT_STRATEGY` | Camino para procesar adjuntos (`local_text` = B) | `local_text` |

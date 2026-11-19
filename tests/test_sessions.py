@@ -11,7 +11,9 @@ from app.sessions import (
 
 
 def add_turn(history: ConversationHistory, number: int) -> None:
-    history.add_turn(f"pregunta {number}", f"respuesta {number}")
+    """Agrega un turno y comprime sin resumen (lo que hace el servicio, sin LLM)."""
+    history.append(f"pregunta {number}", f"respuesta {number}")
+    history.compact()
 
 
 def system_from(metadata: ProjectMetadata) -> str:
@@ -200,3 +202,35 @@ def test_session_records_changes_with_turn_and_sources():
     ]
     assert changes[0].sources == ["mensaje del usuario", "requisitos.pdf"]
     assert session.metadata_log == changes
+
+
+def test_append_does_not_trim_until_compression():
+    history = ConversationHistory(max_turns=2)
+    for number in range(1, 5):
+        history.append(f"pregunta {number}", f"respuesta {number}")
+
+    assert history.turn_count == 4
+    assert history.needs_compression()
+    assert [turn.number for turn in history.turns_to_summarize()] == [1, 2]
+
+    summarized = history.compact("resumen de 1 y 2")
+
+    assert [turn.number for turn in summarized] == [1, 2]
+    assert history.turn_count == 2
+    assert not history.needs_compression()
+
+
+def test_summary_travels_as_user_message_after_system():
+    history = ConversationHistory(max_turns=1)
+    history.append("pregunta 1", "respuesta 1")
+    history.append("pregunta 2", "respuesta 2")
+    history.compact("El cliente pidió una app de turnos.")
+
+    messages = history.to_messages_list(ProjectMetadata(), lambda metadata: "system")
+
+    assert messages[0] == {"role": "system", "content": "system"}
+    assert messages[1] == {
+        "role": "user",
+        "content": "[Earlier conversation summary]\nEl cliente pidió una app de turnos.",
+    }
+    assert [m["content"] for m in messages[2:]] == ["pregunta 2", "respuesta 2"]

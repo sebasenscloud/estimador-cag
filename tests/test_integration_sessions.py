@@ -248,7 +248,11 @@ async def test_history_sent_to_the_llm_never_exceeds_max_turns(client, fake_llm)
     assert len(fake_llm.estimation_calls) == 8
     for call_number, messages in enumerate(fake_llm.estimation_calls, start=1):
         # system + pares de la ventana + user actual
-        history = messages[1:-1]
+        history = [
+            message
+            for message in messages[1:-1]
+            if not message["content"].startswith("[Earlier conversation summary]")
+        ]
         assert len(history) % 2 == 0
         assert len(history) // 2 <= settings.session_max_turns
         assert len(history) // 2 == min(call_number - 1, settings.session_max_turns)

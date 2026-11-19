@@ -87,7 +87,9 @@ def test_window_limits_the_turns_sent(llm_messages, monkeypatch):
         estimate(session_id)
 
     # 2 pares de la ventana + system + user actual
-    assert len(llm_messages[-1]) == 1 + 2 * 2 + 1
+    # system + resumen + 2 pares de la ventana + user actual
+    assert len(llm_messages[-1]) == 1 + 1 + 2 * 2 + 1
+    assert llm_messages[-1][1]["content"].startswith("[Earlier conversation summary]")
     assert session.history.turn_count == 2
 
 
@@ -152,7 +154,12 @@ def test_debug_endpoint_reflects_turns_window_and_llm_calls(llm_messages):
     assert body["window_turns"] == 2
     assert body["message_count"] == 4
     assert body["project_metadata"]["project_name"] == "Turnito"
-    assert [call["purpose"] for call in body["last_llm_calls"]] == ["estimation"]
+    # El tercer turno desbordó la ventana: hubo una llamada al summarizer.
+    assert [call["purpose"] for call in body["last_llm_calls"]] == [
+        "estimation",
+        "summary",
+    ]
+    assert body["summary_chars"] > 0
 
 
 def test_debug_endpoint_returns_404_for_unknown_session():

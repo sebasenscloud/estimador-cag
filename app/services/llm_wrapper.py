@@ -107,10 +107,14 @@ def generate_structured(
     user_message: str,
     response_model: type[ResponseModel],
     purpose: str = "estimation",
+    model: str | None = None,
 ) -> LLMCall[ResponseModel]:
     """Atajo para un solo turno: system + user como texto."""
     return generate_structured_from_messages(
-        _messages(system_prompt, user_message), response_model, purpose=purpose
+        _messages(system_prompt, user_message),
+        response_model,
+        purpose=purpose,
+        model=model,
     )
 
 
@@ -118,6 +122,7 @@ def generate_structured_from_messages(
     messages: list[dict],
     response_model: type[ResponseModel],
     purpose: str = "estimation",
+    model: str | None = None,
 ) -> LLMCall[ResponseModel]:
     """Pide al modelo una respuesta que cumpla `response_model`.
 
@@ -131,9 +136,11 @@ def generate_structured_from_messages(
 
     Devuelve un `LLMCall` con el resultado y sus métricas (latencia, tokens,
     costo, modelo y proveedor); `purpose` identifica para qué se hizo la llamada.
+    `model` permite usar otro modelo que LLM_MODEL (por ejemplo, uno barato para
+    resumir).
     """
     start = time.perf_counter()
-    model = settings.llm_model
+    model = model or settings.llm_model
     try:
         result, completion = get_client().chat.completions.create_with_completion(
             model=model,

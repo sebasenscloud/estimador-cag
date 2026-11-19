@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from app.schemas import EstimationResult, LLMCallMetrics
@@ -34,6 +36,28 @@ def block_real_llm_calls(monkeypatch):
         pytest.fail("Un test intentó llamar al LLM real; simulá la llamada.")
 
     monkeypatch.setattr(llm_wrapper.litellm, "completion", forbidden)
+
+
+@pytest.fixture(autouse=True)
+def fake_summarizer(monkeypatch):
+    """Summarizer determinístico: lista los turnos que se condensaron.
+
+    Los tests que necesitan otro comportamiento lo reemplazan con monkeypatch.
+    """
+    from app import compression
+
+    def summarize(system_prompt, user_message, response_model, **kwargs):
+        numbers = re.findall(r'<turno numero="(\d+)">', user_message)
+        previous = re.search(
+            r"<resumen_actual>\s*(.*?)\s*</resumen_actual>", user_message, re.DOTALL
+        )[1]
+        base = "" if previous == "(vacío)" else previous + " "
+        return llm_call(
+            response_model(summary=f"{base}Resumen de turnos {', '.join(numbers)}."),
+            "summary",
+        )
+
+    monkeypatch.setattr(compression, "generate_structured", summarize)
 
 
 @pytest.fixture

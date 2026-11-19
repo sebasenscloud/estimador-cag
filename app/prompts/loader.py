@@ -80,3 +80,18 @@ def render_metadata_extraction_prompt(
     system = environment.get_template("system.j2").render(**context).strip()
     user = environment.get_template("user.j2").render(**context).strip()
     return system, user
+
+
+def render_summary_prompt(
+    previous_summary: str, turns: list, max_chars: int, version: str = "v1"
+) -> tuple[str, str]:
+    """Prompt del summarizer: el resumen actual y los turnos que salen de la ventana."""
+    environment = _get_environment(version, family="summary")
+    context = {
+        "previous_summary": previous_summary,
+        "turns": turns,
+        "max_chars": max_chars,
+    }
+    system = environment.get_template("system.j2").render(**context).strip()
+    user = environment.get_template("user.j2").render(**context).strip()
+    return system, user

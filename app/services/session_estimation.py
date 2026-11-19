@@ -26,6 +26,7 @@ from app.attachments import (
     get_attachment_processor,
     validate_attachments,
 )
+from app.compression import apply_compression
 from app.config import settings
 from app.guardrails.output import enforce_scope_response
 from app.prompts.loader import render_estimation_prompt
@@ -104,11 +105,15 @@ def _run_turn(
 
     # Al historial va el texto del turno, no el de los adjuntos: su contenido ya
     # quedó destilado en project_metadata y así no infla los turnos siguientes.
-    session.history.add_turn(
+    session.history.append(
         _history_user_message(user_message, processed),
         result.model_dump_json(),
         anchor_rules=anchor.matched_rules,
     )
+    # append() no recorta: la compresión (y su posible llamada al LLM) es explícita.
+    summary_metrics = apply_compression(session.history)
+    if summary_metrics is not None:
+        llm_calls.append(summary_metrics)
     session.total_turns += 1
     if anchor.is_anchor:
         logger.info(
@@ -160,7 +165,7 @@ def get_debug_info(session_id: str) -> SessionDebugInfo:
         max_turns=session.history.max_turns,
         message_count=len(session.history),
         anchors_count=session.history.anchor_count,
-        summary_chars=len(session.summary),
+        summary_chars=len(session.history.summary),
         last_resolved_tier=session.last_resolved_tier,
         last_tier_rule=session.last_tier_rule,
         project_metadata=session.metadata,

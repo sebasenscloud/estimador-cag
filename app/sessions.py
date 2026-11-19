@@ -21,7 +21,6 @@ reemplazarlo por Redis o una base de datos sin tocar a quien lo usa.
 
 import threading
 import uuid
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -94,17 +93,21 @@ class Turn:
         return bool(self.anchor_rules)
 
 
-class ConversationHistory:
-    """Historial de mensajes con ventana deslizante y anclas.
+SUMMARY_HEADER = "[Earlier conversation summary]"
 
-    - Un turno es un par (user, assistant). Se guarda completo o no se guarda,
-      así nunca queda una respuesta sin su pregunta.
-    - La ventana conserva los últimos `max_turns` turnos. Cuando un turno sale:
-        - si es ancla, pasa a la lista de anclas y sigue viajando al LLM;
-        - si no, se descarta (y `add_turn` lo devuelve, para quien quiera
-          resumirlo).
-    - Las anclas también tienen un límite (`max_anchors`): si se supera, sale
-      la más vieja. Un ancla de más queda en el prompt para siempre.
+
+class ConversationHistory:
+    """Historial con compresión híbrida: resumen + anclas + ventana.
+
+    - Un turno es un par (user, assistant). Se guarda completo o no se guarda.
+    - `append()` solo agrega: no recorta. El servicio llama justo después a
+      `apply_compression()` (app/compression.py), así quien lee el código ve
+      cuándo se paga la llamada al LLM que resume.
+    - Al comprimir, los turnos que exceden la ventana (`max_turns`):
+        - si son ancla, pasan a la lista de anclas y siguen literales;
+        - si no, se condensan en el resumen acumulado.
+    - Las anclas tienen su propio límite (`max_anchors`): el exceso también va
+      al resumen, nunca se pierde en silencio.
     - El system prompt es invariante: siempre va primero en `to_messages_list()`
       y se regenera en cada llamada a partir del `project_metadata` actual.
     """
@@ -114,36 +117,56 @@ class ConversationHistory:
             raise ValueError("max_turns tiene que ser al menos 1.")
         self.max_turns = max_turns
         self.max_anchors = max_anchors
-        self._window: deque[Turn] = deque()
+        self.summary = ""
+        self._window: list[Turn] = []
         self._anchored: list[Turn] = []
         self._next_number = 1
 
-    def add_turn(
+    def append(
         self,
         user_content: str,
         assistant_content: str,
         anchor_rules: list[str] | None = None,
-    ) -> Turn | None:
-        """Agrega un turno. Devuelve el turno no anclado que salió de la ventana."""
-        self._window.append(
-            Turn(
-                number=self._next_number,
-                user={"role": "user", "content": user_content},
-                assistant={"role": "assistant", "content": assistant_content},
-                anchor_rules=list(anchor_rules or []),
-            )
+    ) -> Turn:
+        """Agrega un turno al final de la ventana. No recorta nada."""
+        turn = Turn(
+            number=self._next_number,
+            user={"role": "user", "content": user_content},
+            assistant={"role": "assistant", "content": assistant_content},
+            anchor_rules=list(anchor_rules or []),
         )
+        self._window.append(turn)
         self._next_number += 1
-        if len(self._window) <= self.max_turns:
-            return None
+        return turn
 
-        oldest = self._window.popleft()
-        if not oldest.is_anchor:
-            return oldest
-        self._anchored.append(oldest)
-        if len(self._anchored) > self.max_anchors:
-            self._anchored.pop(0)
-        return None
+    def _plan(self) -> tuple[list[Turn], list[Turn], list[Turn]]:
+        """(ventana que queda, anclas que quedan, turnos que van al resumen)."""
+        excess = max(0, len(self._window) - self.max_turns)
+        overflow, window = self._window[:excess], self._window[excess:]
+        anchors = self._anchored + [turn for turn in overflow if turn.is_anchor]
+        kept_anchors = anchors[-self.max_anchors :] if self.max_anchors else []
+        dropped_anchors = anchors[: len(anchors) - len(kept_anchors)]
+        to_summarize = sorted(
+            [turn for turn in overflow if not turn.is_anchor] + dropped_anchors,
+            key=lambda turn: turn.number,
+        )
+        return window, kept_anchors, to_summarize
+
+    def turns_to_summarize(self) -> list[Turn]:
+        """Lo que la próxima compresión va a condensar (sin modificar nada)."""
+        return self._plan()[2]
+
+    def needs_compression(self) -> bool:
+        return len(self._window) > self.max_turns
+
+    def compact(self, new_summary: str | None = None) -> list[Turn]:
+        """Aplica la compresión: recorta la ventana, mueve anclas y reemplaza el
+        resumen. Devuelve los turnos que quedaron condensados en el resumen."""
+        window, kept_anchors, to_summarize = self._plan()
+        self._window, self._anchored = window, kept_anchors
+        if new_summary is not None:
+            self.summary = new_summary
+        return to_summarize
 
     @property
     def turn_count(self) -> int:
@@ -152,13 +175,11 @@ class ConversationHistory:
 
     @property
     def anchor_count(self) -> int:
-        """Turnos anclados que se conservan, dentro o fuera de la ventana."""
-        in_window = sum(1 for turn in self._window if turn.is_anchor)
-        return len(self._anchored) + in_window
+        """Mensajes anclados que ya salieron de la ventana y se conservan aparte."""
+        return len(self._anchored) * 2
 
     @property
     def anchored_turns(self) -> list[Turn]:
-        """Anclas que ya salieron de la ventana y se conservan aparte."""
         return list(self._anchored)
 
     def to_messages_list(
@@ -166,19 +187,29 @@ class ConversationHistory:
         project_metadata: ProjectMetadata,
         build_system_prompt: Callable[[ProjectMetadata], str],
     ) -> list[dict]:
-        """El array `messages` para la API: system regenerado con la metadata
-        actual, después las anclas que salieron de la ventana y al final la
-        ventana, todo en orden cronológico."""
+        """El array `messages` para la API, en este orden:
+
+        1. system, regenerado con la metadata actual;
+        2. el resumen acumulado, como mensaje user (un segundo system rompería el
+           contrato; el encabezado entre corchetes le indica al modelo que es
+           contexto, no un pedido);
+        3. las anclas que salieron de la ventana, literales;
+        4. la ventana.
+        """
         messages = [
             {"role": "system", "content": build_system_prompt(project_metadata)}
         ]
+        if self.summary:
+            messages.append(
+                {"role": "user", "content": f"{SUMMARY_HEADER}\n{self.summary}"}
+            )
         for turn in [*self._anchored, *self._window]:
             messages.extend([turn.user, turn.assistant])
         return messages
 
     def __len__(self) -> int:
-        """Mensajes que viajan al LLM (sin contar el system prompt)."""
-        return (len(self._window) + len(self._anchored)) * 2
+        """Mensajes de la ventana (sin system, resumen ni anclas)."""
+        return len(self._window) * 2
 
 
 @dataclass
@@ -212,9 +243,8 @@ class Session:
         self.metadata_log.extend(changes)
         return changes
 
-    # Piezas de memoria de la Sesión 6 que todavía no están implementadas.
-    # Existen desde ya para que el endpoint de debug tenga un contrato estable.
-    summary: str = ""
+    # Pieza de la Sesión 6 que todavía no está implementada. Existe desde ya
+    # para que el endpoint de debug tenga un contrato estable.
     last_resolved_tier: str | None = None
     last_tier_rule: str | None = None
 
