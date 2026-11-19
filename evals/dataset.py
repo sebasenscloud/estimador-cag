@@ -1,61 +1,52 @@
 """Golden dataset: 16 casos comiteados en el repo, evaluados como una suite de tests.
 
-Tres reglas de oro (del curso):
+Copia del dataset del curso (rama session_05_live). Tres reglas de oro:
 
 - El dataset vive comiteado: los cambios se ven en un diff.
 - Métricas deterministas siempre que se pueda.
 - Un juez LLM complementa, nunca es el primer escalón.
 
 Rangos, no números exactos: el modelo varía de forma legítima entre
-ejecuciones; el caso detecta lo que se sale de proporción, no cada euro.
-
-Convenciones propias:
-
-- expected_in_summary: todos los ítems tienen que aparecer en el summary
-  (sin distinguir mayúsculas). Un ítem "a|b" acepta cualquiera de las
-  alternativas, porque el modelo puede responder en español o en inglés.
-- expected_technologies_any_of: alcanza con que aparezca una. Vacío = no se
-  evalúa.
+ejecuciones; el caso detecta lo que se sale de proporción (fuera de
+presupuesto, falta una tecnología, tier equivocado), no cada euro.
+Las expectativas son opcionales: un caso solo evalúa lo que declara.
 """
 
 import json
 from pathlib import Path
+from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
-from app.schemas import ProjectType
+from app.schemas import DetailLevel, OutputFormat, ProjectType
 
-DATASET_PATH = Path(__file__).with_name("golden_dataset.json")
+TierStr = Literal["auto", "executive", "pm", "developer", "default"]
 
-Range = tuple[int, int]
+_DEFAULT_PATH = Path(__file__).resolve().parent / "golden_dataset.json"
 
 
 class GoldenCase(BaseModel):
-    id: str = Field(pattern=r"^case-\d{3}-[a-z0-9-]+$")
-    transcript: str = Field(min_length=20, max_length=2000)
+    """Un transcript y el rango esperado alrededor de la respuesta del modelo."""
+
+    id: str = Field(min_length=3, max_length=64)
+    transcript: str = Field(min_length=20, max_length=80_000)
     project_type: ProjectType
-    expected_in_summary: list[str] = Field(min_length=1)
-    expected_technologies_any_of: list[str] = []
-    expected_phase_count_range: Range
-    expected_cost_range_eur: Range
-    expected_duration_weeks_range: Range
+    detail_level: DetailLevel = DetailLevel.MEDIUM
+    output_format: OutputFormat = OutputFormat.PHASES_TABLE
+    # "auto" = lo resuelve el resolver; otro valor = override.
+    tier: TierStr = "auto"
 
-    @model_validator(mode="after")
-    def ranges_are_ordered(self) -> "GoldenCase":
-        for name in (
-            "expected_phase_count_range",
-            "expected_cost_range_eur",
-            "expected_duration_weeks_range",
-        ):
-            low, high = getattr(self, name)
-            if not 0 < low <= high:
-                raise ValueError(f"{name} inválido: [{low}, {high}]")
-        return self
+    expected_out_of_scope: bool = False
+    expected_in_summary: list[str] = Field(default_factory=list)
+    expected_technologies_any_of: list[str] = Field(default_factory=list)
+    expected_phase_count_range: tuple[int, int] | None = None
+    expected_cost_range_eur: tuple[int, int] | None = None
+    expected_duration_weeks_range: tuple[int, int] | None = None
+    # Se compara contra last_resolved_tier de la sesión.
+    expected_tier: TierStr | None = None
 
 
-def load_golden_dataset(path: Path = DATASET_PATH) -> list[GoldenCase]:
-    cases = [GoldenCase.model_validate(raw) for raw in json.loads(path.read_text())]
-    ids = [case.id for case in cases]
-    if len(ids) != len(set(ids)):
-        raise ValueError("Hay ids repetidos en el golden dataset")
-    return cases
+def load_dataset(path: Path | str | None = None) -> list[GoldenCase]:
+    target = Path(path) if path else _DEFAULT_PATH
+    raw = json.loads(target.read_text(encoding="utf-8"))
+    return [GoldenCase.model_validate(entry) for entry in raw]

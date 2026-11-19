@@ -415,7 +415,7 @@ El mensaje `user` no se arma concatenando strings, sino como una **lista de bloq
 
 ## Evals: golden dataset
 
-`evals/golden_dataset.json` tiene 16 casos que se evalúan como una suite de tests. Los ocho primeros siguen la tabla del curso (CRM, fidelización, RRHH interna, ETL, pedido vago, prompt injection, NDA y HIPAA) para poder correr `--limit 8` y comparar. Los otros ocho cubren el resto de los tipos de proyecto, un caso mínimo y una migración legacy cerca del tope de scope. Hay casos en español y en inglés.
+`evals/golden_dataset.json` tiene 16 casos que se evalúan como una suite de tests. Es el dataset del curso (rama `session_05_live`): casos felices de los cuatro tipos de proyecto, dos fuera de scope (pedido vago y adversarial), casos con NDA, HIPAA y GDPR que esperan tier `executive`, uno de equipo chico (`pm`), uno de microservicios (`developer`) y un borde con deadline apretado.
 
 ```json
 {
@@ -438,7 +438,7 @@ Tres reglas de oro:
 - Métricas deterministas siempre que se pueda.
 - Un juez LLM complementa, nunca es el primer escalón.
 
-`evals/dataset.py` valida cada caso con Pydantic (`GoldenCase`: id con formato, rangos ordenados, tipo de proyecto válido) y `tests/test_golden_dataset.py` lo corre en CI sin llamar al LLM. Dos convenciones propias: en `expected_in_summary` un ítem `"a|b"` acepta cualquiera de las alternativas, porque el modelo puede responder en español o en inglés; y una lista vacía en `expected_technologies_any_of` no se evalúa. Los rangos de cada caso son estimaciones propias.
+`evals/dataset.py` valida cada caso con Pydantic (`GoldenCase`) y `load_dataset()` los carga. Las expectativas son opcionales: un caso solo evalúa lo que declara (`expected_out_of_scope`, `expected_tier`, rangos de fases, costo y semanas, términos y tecnologías). `tests/test_golden_dataset.py` lo corre en CI sin llamar al LLM.
 
 ## Estructura
 
