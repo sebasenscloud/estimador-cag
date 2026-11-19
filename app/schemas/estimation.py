@@ -5,7 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from app.schemas.llm import LLMCallMetrics
-from app.sessions import ProjectMetadata
+from app.sessions import MetadataChange, ProjectMetadata
 
 # Debajo de esta confianza, el modelo tiene que declarar que no puede estimar.
 LOW_CONFIDENCE_PCT = 40
@@ -129,6 +129,8 @@ class SessionEstimationResponse(BaseModel):
     attachments: list[AttachmentInfo]
     # Una entrada por llamada al LLM del turno (estimación y extracción de metadata).
     llm_calls: list[LLMCallMetrics] = []
+    # Qué hechos de project_metadata cambiaron en este turno y de dónde salieron.
+    metadata_changes: list[MetadataChange] = []
 
 
 class SessionDebugInfo(BaseModel):
@@ -145,6 +147,8 @@ class SessionDebugInfo(BaseModel):
     last_resolved_tier: str | None
     last_tier_rule: str | None
     project_metadata: ProjectMetadata
+    # Historia completa de la memoria: cada hecho con el turno y el origen.
+    metadata_log: list[MetadataChange]
     last_llm_calls: list[LLMCallMetrics]
 
 

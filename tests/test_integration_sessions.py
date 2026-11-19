@@ -174,6 +174,20 @@ async def test_session_links_two_requests_and_updates_metadata(client, fake_llm)
     assert second["project_metadata"]["project_name"] == "Turnito"
     assert second["project_metadata"]["assumed_team_size"] == 3
     assert second["project_metadata"]["mentioned_technologies"] == ["Flutter", "Stripe"]
+    # Cada hecho queda registrado con el turno en el que apareció.
+    assert [
+        (change["turn"], change["field"], change["value"])
+        for change in second["metadata_changes"]
+    ] == [(2, "mentioned_technologies", "Stripe")]
+    debug = (await client.get(f"/api/v1/sessions/{session_id}")).json()
+    assert [(c["turn"], c["field"]) for c in debug["metadata_log"]] == [
+        (1, "project_name"),
+        (1, "assumed_team_size"),
+        (1, "mentioned_technologies"),
+        (2, "mentioned_technologies"),
+    ]
+    assert debug["metadata_log"][0]["sources"] == ["mensaje del usuario"]
+
     # Cada turno informa las métricas de sus dos llamadas al LLM.
     assert [call["purpose"] for call in second["llm_calls"]] == [
         "estimation",
@@ -215,6 +229,11 @@ async def test_pdf_attachment_content_changes_the_estimation(client, fake_llm):
     assert with_pdf["result"]["total_cost_eur"] == BASE_COST + PAYMENTS_COST
     assert "Pagos online" in [phase["name"] for phase in with_pdf["result"]["phases"]]
     assert with_pdf["attachments"][0]["extracted_chars"] > 0
+    # El hecho "Stripe" queda atribuido al turno que trajo el PDF.
+    stripe = next(
+        change for change in with_pdf["metadata_changes"] if change["value"] == "Stripe"
+    )
+    assert stripe["sources"] == ["mensaje del usuario", "requisitos.pdf"]
 
 
 @pytest.mark.anyio

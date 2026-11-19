@@ -153,3 +153,50 @@ def test_post_sessions_returns_a_new_uuid4_session_id():
     assert uuid.UUID(session_id).version == 4
     assert session_id != second.json()["session_id"]
     assert session_store.get(session_id).history.turn_count == 0
+
+
+def test_diff_metadata_detects_set_changed_added_and_removed():
+    from app.sessions import diff_metadata
+
+    before = ProjectMetadata(
+        project_name="Turnito",
+        assumed_team_size=3,
+        mentioned_technologies=["Flutter", "Firebase"],
+    )
+    after = ProjectMetadata(
+        project_name="Turnito",
+        assumed_team_size=4,
+        mentioned_technologies=["Flutter", "Stripe"],
+        agreed_scope="Incluye pagos online.",
+    )
+
+    assert diff_metadata(before, after) == [
+        ("assumed_team_size", "changed", 4, 3),
+        ("agreed_scope", "set", "Incluye pagos online.", None),
+        ("mentioned_technologies", "added", "Stripe", None),
+        ("mentioned_technologies", "removed", None, "Firebase"),
+    ]
+
+
+def test_unchanged_metadata_produces_no_changes():
+    from app.sessions import diff_metadata
+
+    same = ProjectMetadata(project_name="Turnito")
+
+    assert diff_metadata(same, same.model_copy()) == []
+
+
+def test_session_records_changes_with_turn_and_sources():
+    session = SessionStore(max_turns=4).create()
+    before = session.metadata
+    session.metadata = ProjectMetadata(project_name="Turnito")
+
+    changes = session.record_metadata_change(
+        before, turn=1, sources=["mensaje del usuario", "requisitos.pdf"]
+    )
+
+    assert [(c.turn, c.field, c.action, c.value) for c in changes] == [
+        (1, "project_name", "set", "Turnito")
+    ]
+    assert changes[0].sources == ["mensaje del usuario", "requisitos.pdf"]
+    assert session.metadata_log == changes

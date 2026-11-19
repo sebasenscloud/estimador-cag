@@ -44,6 +44,43 @@ class ProjectMetadata(BaseModel):
     agreed_scope: str | None = None
 
 
+class MetadataChange(BaseModel):
+    """Un cambio en la memoria, con su origen: responde "¿por qué el LLM asumió X?"."""
+
+    turn: int
+    field: str
+    action: str  # set (primera vez), changed (corregido), added / removed (listas)
+    value: str | int | None
+    previous: str | int | None = None
+    # Lo que entró en ese turno: el mensaje del usuario y los adjuntos, si hubo.
+    sources: list[str]
+
+
+def diff_metadata(
+    before: ProjectMetadata, after: ProjectMetadata
+) -> list[tuple[str, str, str | int | None, str | int | None]]:
+    """Compara dos fichas y devuelve (campo, acción, valor, valor anterior)."""
+    changes = []
+    for name in ("project_name", "assumed_team_size", "agreed_scope"):
+        old, new = getattr(before, name), getattr(after, name)
+        if old == new:
+            continue
+        if new is None:
+            changes.append((name, "removed", None, old))
+        else:
+            changes.append((name, "set" if old is None else "changed", new, old))
+
+    old_items = before.mentioned_technologies
+    new_items = after.mentioned_technologies
+    for item in new_items:
+        if item not in old_items:
+            changes.append(("mentioned_technologies", "added", item, None))
+    for item in old_items:
+        if item not in new_items:
+            changes.append(("mentioned_technologies", "removed", None, item))
+    return changes
+
+
 class ConversationHistory:
     """Historial de mensajes con ventana deslizante.
 
@@ -104,6 +141,27 @@ class Session:
     total_turns: int = 0
     # Métricas de las llamadas al LLM del último turno (wrapper observable).
     last_llm_calls: list = field(default_factory=list)
+    # Registro de auditoría: cada cambio de project_metadata con su turno y origen.
+    metadata_log: list[MetadataChange] = field(default_factory=list)
+
+    def record_metadata_change(
+        self, before: ProjectMetadata, turn: int, sources: list[str]
+    ) -> list[MetadataChange]:
+        """Compara la ficha anterior con la actual y registra qué cambió."""
+        changes = [
+            MetadataChange(
+                turn=turn,
+                field=name,
+                action=action,
+                value=value,
+                previous=previous,
+                sources=sources,
+            )
+            for name, action, value, previous in diff_metadata(before, self.metadata)
+        ]
+        self.metadata_log.extend(changes)
+        return changes
+
     # Piezas de memoria de la Sesión 6. Existen desde ya para que el endpoint de
     # debug tenga un contrato estable; se completan al implementar cada una.
     anchors: list[dict] = field(default_factory=list)

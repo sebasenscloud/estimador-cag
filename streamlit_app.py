@@ -87,6 +87,7 @@ def start_new_conversation() -> None:
     st.session_state.turns = []
     st.session_state.project_metadata = ProjectMetadata()
     st.session_state.last_attachments = []
+    st.session_state.metadata_log = []
     try:
         st.session_state.session_id = create_session()
         st.session_state.session_error = None
@@ -264,6 +265,7 @@ if submitted:
             )
             st.session_state.project_metadata = response.project_metadata
             st.session_state.last_attachments = response.attachments
+            st.session_state.metadata_log.extend(response.metadata_changes)
             st.rerun()
 
 with st.sidebar:
@@ -280,6 +282,23 @@ with st.sidebar:
         "historial descarte turnos viejos."
     )
     render_project_metadata(st.session_state.project_metadata)
+
+    if st.session_state.metadata_log:
+        with st.expander("Origen de cada hecho"):
+            st.caption(
+                "Auditoría: en qué turno se registró cada hecho y con qué entradas."
+            )
+            for change in st.session_state.metadata_log:
+                previous = (
+                    f" (antes: {change.previous})"
+                    if change.previous is not None
+                    else ""
+                )
+                st.markdown(
+                    f"- **Turno {change.turn}** · `{change.field}` {change.action}: "
+                    f"{change.value}{previous}  \n"
+                    f"  _Fuentes: {', '.join(change.sources)}_"
+                )
 
     if st.session_state.last_attachments:
         st.subheader("Adjuntos del último turno")

@@ -88,6 +88,7 @@ def _run_turn(
     estimation_call = generate_structured_from_messages(messages, EstimationResult)
     result = enforce_scope_response(estimation_call.result)
 
+    previous_metadata = session.metadata
     session.metadata, extraction_metrics = extract_project_metadata(
         session.metadata, user_content, result
     )
@@ -102,6 +103,11 @@ def _run_turn(
     )
     session.total_turns += 1
     session.last_llm_calls = llm_calls
+    metadata_changes = session.record_metadata_change(
+        previous_metadata,
+        turn=session.total_turns,
+        sources=["mensaje del usuario", *(item.filename for item in processed)],
+    )
 
     logger.info(
         "session_estimation_completed",
@@ -120,6 +126,7 @@ def _run_turn(
         prompt_version=settings.prompt_version,
         attachments=[_info(item) for item in processed],
         llm_calls=llm_calls,
+        metadata_changes=metadata_changes,
     )
 
 
@@ -138,6 +145,7 @@ def get_debug_info(session_id: str) -> SessionDebugInfo:
         last_resolved_tier=session.last_resolved_tier,
         last_tier_rule=session.last_tier_rule,
         project_metadata=session.metadata,
+        metadata_log=session.metadata_log,
         last_llm_calls=session.last_llm_calls,
     )
 

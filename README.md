@@ -230,6 +230,19 @@ La ficha la devuelve completa el modelo, no solo los cambios, para que pueda apl
 
 Alternativa evaluada para más adelante: pedir los hechos en la **misma** llamada de la estimación (un `response_model` con `project_facts` y `estimation`). Ahorra la segunda llamada, pero mezcla dos responsabilidades en un mismo prompt.
 
+### Origen de cada hecho (auditabilidad)
+
+Para poder responder "¿por qué el LLM asumió X?", cada cambio de `project_metadata` se registra con su turno y sus fuentes (`MetadataChange` en `app/sessions.py`):
+
+```json
+{"turn": 3, "field": "mentioned_technologies", "action": "added", "value": "Stripe",
+ "previous": null, "sources": ["mensaje del usuario", "requisitos.pdf"]}
+```
+
+- Después de cada extracción, `diff_metadata` compara la ficha anterior con la nueva: `set` (primera vez), `changed` (corregido, con el valor anterior), `added` / `removed` (listas).
+- `sources` son las entradas del turno: el mensaje y los adjuntos. Indica de qué turno salió el hecho, no si vino del mensaje o de un adjunto en particular (eso requeriría que el extractor atribuya cada hecho).
+- Cada turno devuelve sus cambios en `metadata_changes`, y `GET /sessions/{id}` devuelve el registro completo en `metadata_log`. Streamlit lo muestra en "Origen de cada hecho".
+
 ### Estimar con adjuntos
 
 `POST /api/v1/sessions/{session_id}/estimate` recibe `multipart/form-data`:
