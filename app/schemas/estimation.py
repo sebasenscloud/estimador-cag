@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
@@ -128,6 +129,23 @@ class SessionEstimationResponse(BaseModel):
     attachments: list[AttachmentInfo]
     # Una entrada por llamada al LLM del turno (estimación y extracción de metadata).
     llm_calls: list[LLMCallMetrics] = []
+
+
+class SessionDebugInfo(BaseModel):
+    """Respuesta de GET /sessions/{id}: cómo está la memoria de la sesión."""
+
+    session_id: str
+    created_at: datetime
+    total_turns: int  # turnos completados desde que se creó la sesión
+    window_turns: int  # turnos que hoy están dentro de la ventana deslizante
+    max_turns: int  # tamaño de la ventana
+    message_count: int  # mensajes user/assistant que viajan al LLM (sin el system)
+    anchors_count: int
+    summary_chars: int
+    last_resolved_tier: str | None
+    last_tier_rule: str | None
+    project_metadata: ProjectMetadata
+    last_llm_calls: list[LLMCallMetrics]
 
 
 class EstimationStreamEvent(BaseModel):

@@ -11,6 +11,7 @@ from app.schemas import (
     EstimationRequest,
     OutputFormat,
     ProjectType,
+    SessionDebugInfo,
     SessionEstimationResponse,
 )
 from app.services import session_estimation
@@ -33,6 +34,16 @@ def create_session() -> SessionCreated:
     session = session_store.create()
     logger.info("session_created", session_id=session.session_id)
     return SessionCreated(session_id=session.session_id)
+
+
+@router.get("/{session_id}", response_model=SessionDebugInfo)
+def get_session(session_id: str) -> SessionDebugInfo:
+    """Endpoint de debug: expone cómo se está gestionando la memoria de la sesión
+    (ventana, anclas, resumen, tier) sin mostrar el contenido de los mensajes."""
+    try:
+        return session_estimation.get_debug_info(session_id)
+    except SessionNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
 
 
 @router.post("/{session_id}/estimate", response_model=SessionEstimationResponse)

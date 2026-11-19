@@ -32,6 +32,7 @@ from app.schemas import (
     AttachmentInfo,
     EstimationRequest,
     EstimationResult,
+    SessionDebugInfo,
     SessionEstimationResponse,
 )
 from app.services.llm_wrapper import generate_structured_from_messages
@@ -99,6 +100,8 @@ def _run_turn(
     session.history.add_turn(
         _history_user_message(user_message, processed), result.model_dump_json()
     )
+    session.total_turns += 1
+    session.last_llm_calls = llm_calls
 
     logger.info(
         "session_estimation_completed",
@@ -117,6 +120,25 @@ def _run_turn(
         prompt_version=settings.prompt_version,
         attachments=[_info(item) for item in processed],
         llm_calls=llm_calls,
+    )
+
+
+def get_debug_info(session_id: str) -> SessionDebugInfo:
+    """Estado interno de la sesión para observar cómo se gestiona la memoria."""
+    session = session_store.get(session_id)
+    return SessionDebugInfo(
+        session_id=session.session_id,
+        created_at=session.created_at,
+        total_turns=session.total_turns,
+        window_turns=session.history.turn_count,
+        max_turns=session.history.max_turns,
+        message_count=len(session.history),
+        anchors_count=len(session.anchors),
+        summary_chars=len(session.summary),
+        last_resolved_tier=session.last_resolved_tier,
+        last_tier_rule=session.last_tier_rule,
+        project_metadata=session.metadata,
+        last_llm_calls=session.last_llm_calls,
     )
 
 

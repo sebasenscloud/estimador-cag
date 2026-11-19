@@ -100,6 +100,16 @@ class Session:
     history: ConversationHistory
     metadata: ProjectMetadata = field(default_factory=ProjectMetadata)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Turnos completados en toda la sesión (la ventana solo guarda los últimos).
+    total_turns: int = 0
+    # Métricas de las llamadas al LLM del último turno (wrapper observable).
+    last_llm_calls: list = field(default_factory=list)
+    # Piezas de memoria de la Sesión 6. Existen desde ya para que el endpoint de
+    # debug tenga un contrato estable; se completan al implementar cada una.
+    anchors: list[dict] = field(default_factory=list)
+    summary: str = ""
+    last_resolved_tier: str | None = None
+    last_tier_rule: str | None = None
 
 
 class SessionNotFoundError(LookupError):

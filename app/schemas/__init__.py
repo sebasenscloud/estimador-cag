@@ -13,6 +13,7 @@ from app.schemas.estimation import (
     OutputFormat,
     Phase,
     ProjectType,
+    SessionDebugInfo,
     SessionEstimationResponse,
 )
 from app.schemas.llm import LLMCallMetrics
@@ -33,5 +34,6 @@ __all__ = [
     "OutputFormat",
     "Phase",
     "ProjectType",
+    "SessionDebugInfo",
     "SessionEstimationResponse",
 ]

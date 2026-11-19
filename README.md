@@ -178,6 +178,23 @@ El system prompt no se guarda en la ventana: se regenera en cada turno. Así, un
 
 Las sesiones viven en un diccionario del proceso: se pierden al reiniciar el servicio. Es una decisión consciente para esta fase (ver el docstring de `app/sessions.py`).
 
+### Debug: `GET /api/v1/sessions/{session_id}`
+
+Expone cómo se está gestionando la memoria de la sesión, sin el contenido de los mensajes:
+
+| Campo | Qué es |
+|---|---|
+| `total_turns` | Turnos completados desde que se creó la sesión |
+| `window_turns` / `max_turns` | Turnos que hoy están en la ventana deslizante y su tamaño máximo |
+| `message_count` | Mensajes user/assistant que viajan al LLM (sin contar el system) |
+| `anchors_count` | Mensajes anclados que no salen de la ventana (Sesión 6; hoy 0) |
+| `summary_chars` | Largo del resumen acumulativo (Sesión 6; hoy 0) |
+| `last_resolved_tier` / `last_tier_rule` | Tier de modelo elegido en el último turno y la regla que lo eligió (Sesión 6; hoy `null`) |
+| `project_metadata` | La memoria estructurada actual |
+| `last_llm_calls` | Métricas de las llamadas al LLM del último turno |
+
+Los campos de anclas, resumen y tier ya forman parte del contrato aunque esas piezas todavía no existan: así el endpoint no cambia de forma cuando se implementen.
+
 ### `project_metadata` en el system prompt
 
 En cada turno, el system prompt (`app/prompts/estimation/v1/system.j2`) incluye un bloque con los hechos conocidos del proyecto:

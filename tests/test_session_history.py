@@ -118,3 +118,42 @@ def test_failed_turn_is_not_stored(monkeypatch, llm_messages):
 
     assert response.status_code == 502
     assert session_store.get(session_id).history.turn_count == 0
+
+
+def test_debug_endpoint_for_a_new_session():
+    session_id = new_session()
+
+    response = client.get(f"/api/v1/sessions/{session_id}")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session_id"] == session_id
+    assert body["total_turns"] == 0
+    assert body["message_count"] == 0
+    assert body["max_turns"] == session_store.get(session_id).history.max_turns
+    assert body["anchors_count"] == 0
+    assert body["summary_chars"] == 0
+    assert body["last_resolved_tier"] is None
+    assert body["last_tier_rule"] is None
+    assert body["last_llm_calls"] == []
+
+
+def test_debug_endpoint_reflects_turns_window_and_llm_calls(llm_messages):
+    session_id = new_session()
+    session_store.get(session_id).history = type(session_store.get(session_id).history)(
+        max_turns=2
+    )
+
+    for _ in range(3):
+        estimate(session_id)
+    body = client.get(f"/api/v1/sessions/{session_id}").json()
+
+    assert body["total_turns"] == 3
+    assert body["window_turns"] == 2
+    assert body["message_count"] == 4
+    assert body["project_metadata"]["project_name"] == "Turnito"
+    assert [call["purpose"] for call in body["last_llm_calls"]] == ["estimation"]
+
+
+def test_debug_endpoint_returns_404_for_unknown_session():
+    assert client.get("/api/v1/sessions/no-existe").status_code == 404
