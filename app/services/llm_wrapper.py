@@ -1,7 +1,8 @@
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from functools import lru_cache
-from typing import TypeVar
+from typing import Generic, TypeVar
 
 import instructor
 import litellm
@@ -11,10 +12,41 @@ from instructor.core.exceptions import InstructorRetryException
 from pydantic import BaseModel, ValidationError
 
 from app.config import settings
+from app.schemas.llm import LLMCallMetrics
 
 logger = structlog.get_logger()
 
 ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
+
+# Precios en USD por millón de tokens: (entrada, salida). Se buscan por el
+# nombre del modelo sin el prefijo del proveedor ("anthropic/claude-haiku-4-5"
+# → "claude-haiku-4-5"). Un modelo que no esté acá devuelve cost_usd=None.
+MODEL_COSTS: dict[str, tuple[float, float]] = {
+    "claude-haiku-4-5": (1.00, 5.00),
+    "claude-haiku-5-5": (0.10, 0.50),
+    "claude-sonnet-5-5": (2.00, 10.00),
+    "claude-opus-5-5": (4.00, 20.00),
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4o": (2.50, 10.00),
+}
+
+
+@dataclass(frozen=True)
+class LLMCall(Generic[ResponseModel]):
+    """Lo que devuelve cada llamada: el resultado validado y sus métricas."""
+
+    result: ResponseModel
+    metrics: LLMCallMetrics
+
+
+def estimate_cost(
+    model: str, tokens_in: int | None, tokens_out: int | None
+) -> float | None:
+    prices = MODEL_COSTS.get(model.split("/", 1)[-1])
+    if prices is None or tokens_in is None or tokens_out is None:
+        return None
+    price_in, price_out = prices
+    return round((tokens_in * price_in + tokens_out * price_out) / 1_000_000, 6)
 
 
 class LLMProviderError(Exception):
@@ -49,7 +81,7 @@ def provider_name(model: str) -> str:
     return litellm.get_llm_provider(model)[1]
 
 
-def _api_key(model: str) -> str:
+def api_key_for(model: str) -> str:
     keys = {
         "anthropic": settings.anthropic_api_key,
         "openai": settings.openai_api_key,
@@ -71,30 +103,59 @@ def _messages(system_prompt: str, user_message: str) -> list[dict]:
 
 
 def generate_structured(
-    system_prompt: str, user_message: str, response_model: type[ResponseModel]
-) -> ResponseModel:
+    system_prompt: str,
+    user_message: str,
+    response_model: type[ResponseModel],
+    purpose: str = "estimation",
+    model: str | None = None,
+) -> LLMCall[ResponseModel]:
+    """Atajo para un solo turno: system + user como texto."""
+    return generate_structured_from_messages(
+        _messages(system_prompt, user_message),
+        response_model,
+        purpose=purpose,
+        model=model,
+    )
+
+
+def generate_structured_from_messages(
+    messages: list[dict],
+    response_model: type[ResponseModel],
+    purpose: str = "estimation",
+    model: str | None = None,
+) -> LLMCall[ResponseModel]:
     """Pide al modelo una respuesta que cumpla `response_model`.
+
+    Recibe el array `messages` completo, en el formato de LiteLLM/OpenAI. El
+    `content` de un mensaje puede ser un string o una lista de bloques
+    ({"type": "text"}, {"type": "file"}, ...): así sirve para adjuntos de
+    cualquier camino y para el historial de una sesión.
 
     Política FIX · RETRY: si la respuesta no pasa la validación de Pydantic,
     Instructor le reenvía el error al modelo hasta `LLM_MAX_RETRIES` veces.
+
+    Devuelve un `LLMCall` con el resultado y sus métricas (latencia, tokens,
+    costo, modelo y proveedor); `purpose` identifica para qué se hizo la llamada.
+    `model` permite usar otro modelo que LLM_MODEL (por ejemplo, uno barato para
+    resumir).
     """
     start = time.perf_counter()
-    model = settings.llm_model
+    model = model or settings.llm_model
     try:
         result, completion = get_client().chat.completions.create_with_completion(
             model=model,
-            messages=_messages(system_prompt, user_message),
+            messages=messages,
             response_model=response_model,
             max_retries=settings.llm_max_retries,
             max_tokens=settings.max_tokens,
-            api_key=_api_key(model),
+            api_key=api_key_for(model),
         )
     except InstructorRetryException as error:
         _log_failed(model, error)
         if isinstance(error.__cause__, openai.APIError):
             raise LLMProviderError(str(error.__cause__)) from error
         raise InvalidLLMOutputError(
-            f"El modelo no devolvió una estimación válida tras "
+            f"El modelo no devolvió una respuesta válida tras "
             f"{error.n_attempts} intentos: {error}"
         ) from error
     except openai.APIError as error:
@@ -102,15 +163,23 @@ def generate_structured(
         raise LLMProviderError(str(error)) from error
 
     usage = getattr(completion, "usage", None)
+    tokens_in = getattr(usage, "prompt_tokens", None)
+    tokens_out = getattr(usage, "completion_tokens", None)
+    metrics = LLMCallMetrics(
+        purpose=purpose,
+        model=model,
+        provider=provider_name(model),
+        latency_ms=round((time.perf_counter() - start) * 1000),
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        cost_usd=estimate_cost(model, tokens_in, tokens_out),
+    )
     logger.info(
         "llm_request_completed",
-        model=model,
         prompt_version=settings.prompt_version,
-        input_tokens=getattr(usage, "prompt_tokens", None),
-        output_tokens=getattr(usage, "completion_tokens", None),
-        duration_ms=round((time.perf_counter() - start) * 1000),
+        **metrics.model_dump(),
     )
-    return result
+    return LLMCall(result=result, metrics=metrics)
 
 
 def stream_structured(
@@ -131,7 +200,7 @@ def stream_structured(
             response_model=response_model,
             max_retries=settings.llm_max_retries,
             max_tokens=settings.max_tokens,
-            api_key=_api_key(model),
+            api_key=api_key_for(model),
         )
     except InstructorRetryException as error:
         _log_failed(model, error)

@@ -4,6 +4,7 @@ from app.schemas.estimation import (
     OUT_OF_SCOPE_PREFIX,
     OUTPUT_FORMAT_LABELS,
     PROJECT_TYPE_LABELS,
+    AttachmentInfo,
     DetailLevel,
     EstimationRequest,
     EstimationResponse,
@@ -12,7 +13,10 @@ from app.schemas.estimation import (
     OutputFormat,
     Phase,
     ProjectType,
+    SessionDebugInfo,
+    SessionEstimationResponse,
 )
+from app.schemas.llm import LLMCallMetrics
 
 __all__ = [
     "DETAIL_LEVEL_LABELS",
@@ -20,12 +24,16 @@ __all__ = [
     "OUTPUT_FORMAT_LABELS",
     "OUT_OF_SCOPE_PREFIX",
     "PROJECT_TYPE_LABELS",
+    "AttachmentInfo",
     "DetailLevel",
     "EstimationRequest",
     "EstimationResponse",
     "EstimationResult",
     "EstimationStreamEvent",
+    "LLMCallMetrics",
     "OutputFormat",
     "Phase",
     "ProjectType",
+    "SessionDebugInfo",
+    "SessionEstimationResponse",
 ]

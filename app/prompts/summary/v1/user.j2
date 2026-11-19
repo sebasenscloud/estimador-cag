@@ -1,0 +1,16 @@
+<resumen_actual>
+{{ previous_summary or "(vacío)" }}
+</resumen_actual>
+
+<turnos_que_salen_de_la_ventana>
+{% for turn in turns %}
+<turno numero="{{ turn.number }}">
+<usuario>
+{{ turn.user.content }}
+</usuario>
+<respuesta>
+{{ turn.assistant.content }}
+</respuesta>
+</turno>
+{% endfor %}
+</turnos_que_salen_de_la_ventana>

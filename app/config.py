@@ -13,9 +13,46 @@ class Settings(BaseSettings):
     log_level: str = "info"
     max_tokens: int = 16000
     cache_max_entries: int = 128
+    # Input guardrail: moderación de OpenAI (necesita OPENAI_API_KEY; si falta, se salta).
+    moderation_enabled: bool = True
+    moderation_model: str = "omni-moderation-latest"
     # Output guardrail: proyectos más largos que esto se consideran fuera de scope.
     scope_max_weeks: int = 104
-    prompt_version: str = "v1"
+    # v2 agrega el bloque <audience>; v3 suma <critic_feedback> para el modo
+    # Actor-Critic-Boss (sin feedback renderiza igual que v2).
+    prompt_version: str = "v3"
+    # Actor-Critic-Boss: modelo del crítico (vacío = LLM_MODEL) y rondas máximas
+    # (cada ronda = 1 llamada del actor + 1 del crítico).
+    critic_model: str | None = None
+    boss_max_iterations: int = 3
+    # Tier dinámico: términos técnicos distintos para pasar a "developer" y
+    # tamaño de equipo para pasar a "pm".
+    tier_technical_terms: int = 2
+    # Equipo chico (<= 2) pasa a "pm" (regla low_budget_pm del curso).
+    tier_small_team_size: int = 2
+    # Sesiones: turnos (user + assistant) que conserva la ventana deslizante.
+    session_max_turns: int = 6
+    # Anclas: heuristic (8 reglas, sin LLM) o llm (clasificador, una llamada más).
+    anchor_detection_mode: str = "heuristic"
+    # Turnos anclados que se conservan fuera de la ventana (los más viejos salen).
+    max_anchors: int = 5
+    # Resumen acumulado: modelo para resumir (vacío = LLM_MODEL; conviene uno barato)
+    # y largo máximo que se le pide.
+    summary_model: str | None = None
+    summary_max_chars: int = 1500
+    # Adjuntos. ATTACHMENT_STRATEGY: auto (el router elige por documento),
+    # local_text (siempre camino B) o multimodal (PDFs siempre por el camino A).
+    attachment_strategy: str = "auto"
+    # Camino A: inline (base64 en el mensaje) o files_api (subida al proveedor).
+    attachment_multimodal_mode: str = "inline"
+    # Umbrales del router para PDFs.
+    attachment_min_chars_per_page: int = 100
+    attachment_image_heavy_per_page: float = 1.0
+    attachment_visual_max_chars_per_page: int = 800
+    attachment_large_pdf_pages: int = 30
+    attachment_max_files: int = 5
+    attachment_max_bytes: int = 10 * 1024 * 1024
+    attachment_max_chars: int = 20_000
     estimator_api_url: str = "http://127.0.0.1:8000"
     estimator_api_timeout: float = 300.0
 

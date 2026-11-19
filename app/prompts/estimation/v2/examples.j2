@@ -1,0 +1,64 @@
+<ejemplos>
+<ejemplo numero="1">
+<tipo_de_proyecto>Herramienta interna</tipo_de_proyecto>
+<descripcion>
+Una empresa de 300 empleados quiere un portal para pedir vacaciones. Login con Google Workspace, aprobación del manager directo, calendario del equipo y exportación mensual a Excel para Recursos Humanos.
+</descripcion>
+<estimacion>
+{
+  "summary": "Portal interno de vacaciones con SSO de Google, flujo de aprobación y reportes para RR. HH. Se asume que el organigrama se obtiene de Google Workspace.",
+  "phases": [
+    {"name": "Discovery", "description": "Relevamiento con RR. HH. y definición de reglas de aprobación.", "duration_weeks": 1, "cost_eur": 1600, "confidence_pct": 90},
+    {"name": "Diseño UX", "description": "Flujos de pedido, bandeja del manager y calendario.", "duration_weeks": 1, "cost_eur": 2400, "confidence_pct": 85},
+    {"name": "Desarrollo", "description": "API de solicitudes y saldos, frontend, SSO y exportación a Excel.", "duration_weeks": 3, "cost_eur": 10800, "confidence_pct": 75},
+    {"name": "Testing y despliegue", "description": "Pruebas de permisos, puesta en producción y capacitación.", "duration_weeks": 1, "cost_eur": 3200, "confidence_pct": 80}
+  ],
+  "total_duration_weeks": 6,
+  "total_cost_eur": 18000,
+  "confidence_pct": 80
+}
+</estimacion>
+</ejemplo>
+
+<ejemplo numero="2">
+<tipo_de_proyecto>Pipeline de datos</tipo_de_proyecto>
+<descripcion>
+Una cadena de 40 sucursales deja cada noche un CSV de ventas en un servidor SFTP. Quieren cargarlo a BigQuery, validar la calidad de los datos y ver un tablero de ventas por sucursal en Looker Studio.
+</descripcion>
+<estimacion>
+{
+  "summary": "Pipeline nocturno de ventas desde SFTP a BigQuery con controles de calidad y tablero en Looker Studio. Se asume un formato de CSV estable entre sucursales.",
+  "phases": [
+    {"name": "Relevamiento", "description": "Análisis de formatos de CSV y reglas de calidad.", "duration_weeks": 1, "cost_eur": 1500, "confidence_pct": 85},
+    {"name": "Ingesta y validaciones", "description": "Carga incremental desde SFTP y controles de duplicados, nulos y rangos.", "duration_weeks": 2, "cost_eur": 6000, "confidence_pct": 75},
+    {"name": "Modelado y orquestación", "description": "Modelo por sucursal, producto y fecha; ejecución diaria con alertas.", "duration_weeks": 1, "cost_eur": 3500, "confidence_pct": 75},
+    {"name": "Tablero y traspaso", "description": "Tablero en Looker Studio y documentación para el equipo de datos.", "duration_weeks": 1, "cost_eur": 2800, "confidence_pct": 80}
+  ],
+  "total_duration_weeks": 5,
+  "total_cost_eur": 13800,
+  "confidence_pct": 75
+}
+</estimacion>
+</ejemplo>
+
+<ejemplo numero="3">
+<tipo_de_proyecto>Aplicación móvil</tipo_de_proyecto>
+<descripcion>
+Una veterinaria quiere una app para iOS y Android donde los clientes saquen turnos, vean la historia clínica de sus mascotas y reciban recordatorios de vacunas. El personal necesita un panel web simple para cargar la agenda.
+</descripcion>
+<estimacion>
+{
+  "summary": "App multiplataforma en Flutter con backend propio, panel web para el personal y notificaciones push. La publicación en tiendas agrega incertidumbre por las revisiones.",
+  "phases": [
+    {"name": "Discovery y diseño", "description": "Requisitos, identidad visual y diseño de pantallas.", "duration_weeks": 2, "cost_eur": 6000, "confidence_pct": 80},
+    {"name": "App móvil y backend", "description": "Turnos, perfiles de mascotas, historia clínica, API y autenticación.", "duration_weeks": 6, "cost_eur": 36000, "confidence_pct": 65},
+    {"name": "Panel y notificaciones", "description": "Panel web de agenda y recordatorios push de vacunas.", "duration_weeks": 1, "cost_eur": 5000, "confidence_pct": 70},
+    {"name": "QA y publicación", "description": "Pruebas en dispositivos reales y publicación en App Store y Google Play.", "duration_weeks": 2, "cost_eur": 7000, "confidence_pct": 65}
+  ],
+  "total_duration_weeks": 11,
+  "total_cost_eur": 54000,
+  "confidence_pct": 70
+}
+</estimacion>
+</ejemplo>
+</ejemplos>

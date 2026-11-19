@@ -1,7 +1,12 @@
+from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+from app.schemas.critic import BossTrace
+from app.schemas.llm import LLMCallMetrics
+from app.sessions import MetadataChange, ProjectMetadata
 
 # Debajo de esta confianza, el modelo tiene que declarar que no puede estimar.
 LOW_CONFIDENCE_PCT = 40
@@ -104,6 +109,57 @@ class EstimationResponse(BaseModel):
     result: EstimationResult
     prompt_version: str
     cached: bool
+
+
+class AttachmentInfo(BaseModel):
+    filename: str
+    strategy: str  # local_text (camino B) o multimodal (camino A)
+    tool: str  # pypdf, pymupdf, python-docx, multimodal_inline, multimodal_files_api
+    reason: str  # por qué el router eligió esa herramienta
+    extracted_chars: int
+    truncated: bool
+    warning: str | None = None
+
+
+class SessionEstimationResponse(BaseModel):
+    session_id: str
+    history_turns: int
+    result: EstimationResult
+    project_metadata: ProjectMetadata
+    prompt_version: str
+    attachments: list[AttachmentInfo]
+    # Una entrada por llamada al LLM del turno (estimación y extracción de metadata).
+    llm_calls: list[LLMCallMetrics] = []
+    # Qué hechos de project_metadata cambiaron en este turno y de dónde salieron.
+    metadata_changes: list[MetadataChange] = []
+    # Reglas que anclaron este turno (no sale del historial); vacía si no es ancla.
+    anchor_rules: list[str] = []
+    # En modo llm, por qué el clasificador ancló (o no) el turno.
+    anchor_reason: str | None = None
+    # Audiencia resuelta para este turno y la regla que la eligió.
+    tier: str = "default"
+    tier_rule: str = "default"
+    # Solo en /estimate-acb: rondas del crítico y decisión final del Boss.
+    acb: BossTrace | None = None
+
+
+class SessionDebugInfo(BaseModel):
+    """Respuesta de GET /sessions/{id}: cómo está la memoria de la sesión."""
+
+    session_id: str
+    created_at: datetime
+    total_turns: int  # turnos completados desde que se creó la sesión
+    window_turns: int  # turnos que hoy están dentro de la ventana deslizante
+    max_turns: int  # tamaño de la ventana
+    message_count: int  # mensajes user/assistant que viajan al LLM (sin el system)
+    anchors_count: int
+    summary_chars: int
+    last_resolved_tier: str | None
+    last_tier_rule: str | None
+    project_metadata: ProjectMetadata
+    # Historia completa de la memoria: cada hecho con el turno y el origen.
+    metadata_log: list[MetadataChange]
+    last_llm_calls: list[LLMCallMetrics]
 
 
 class EstimationStreamEvent(BaseModel):

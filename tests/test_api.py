@@ -7,6 +7,7 @@ from app.prompts.loader import render_estimation_prompt
 from app.schemas import EstimationRequest, EstimationResult, EstimationStreamEvent
 from app.services import estimation
 from app.services.llm_wrapper import InvalidLLMOutputError, LLMProviderError
+from tests.conftest import llm_call
 
 client = TestClient(app)
 
@@ -25,11 +26,11 @@ VALID_REQUEST = {
 def received(monkeypatch, estimation_result):
     calls = {}
 
-    def fake_generate_structured(system_prompt, user_message, response_model):
+    def fake_generate_structured(system_prompt, user_message, response_model, **kwargs):
         calls.update(
             system=system_prompt, user=user_message, response_model=response_model
         )
-        return estimation_result
+        return llm_call(estimation_result)
 
     monkeypatch.setattr(estimation, "generate_structured", fake_generate_structured)
     estimation.cache.clear()
@@ -38,7 +39,7 @@ def received(monkeypatch, estimation_result):
 
 
 def fail_with(monkeypatch, error):
-    def failing(system_prompt, user_message, response_model):
+    def failing(system_prompt, user_message, response_model, **kwargs):
         raise error
 
     monkeypatch.setattr(estimation, "generate_structured", failing)
@@ -58,7 +59,7 @@ def test_estimate_returns_structured_result(received, estimation_result):
     assert response.status_code == 200
     body = response.json()
     assert body["result"] == estimation_result.model_dump()
-    assert body["prompt_version"] == "v1"
+    assert body["prompt_version"] == settings.prompt_version
     assert body["cached"] is False
 
 
@@ -145,7 +146,7 @@ def test_stream_endpoint_returns_ndjson_events(monkeypatch, estimation_result):
 
 
 def test_stream_endpoint_reports_errors_as_events(monkeypatch):
-    def failing_stream(system_prompt, user_message, response_model):
+    def failing_stream(system_prompt, user_message, response_model, **kwargs):
         raise LLMProviderError("API key inválida")
         yield
 
