@@ -44,6 +44,7 @@ def render_estimation_prompt(
     request: EstimationRequest,
     version: str = "v1",
     project_metadata: ProjectMetadata | None = None,
+    tier: str = "default",
 ) -> tuple[str, str]:
     """Devuelve (system, user) renderizados con la versión de prompt indicada.
 
@@ -60,6 +61,8 @@ def render_estimation_prompt(
         "low_confidence_pct": LOW_CONFIDENCE_PCT,
         "out_of_scope_prefix": OUT_OF_SCOPE_PREFIX,
         "project_metadata": project_metadata or ProjectMetadata(),
+        # Solo lo usa v2 (bloque <audience>); v1 lo ignora.
+        "tier": tier,
     }
 
     system = environment.get_template("system.j2").render(**context).strip()

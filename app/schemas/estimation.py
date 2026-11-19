@@ -135,6 +135,9 @@ class SessionEstimationResponse(BaseModel):
     anchor_rules: list[str] = []
     # En modo llm, por qué el clasificador ancló (o no) el turno.
     anchor_reason: str | None = None
+    # Audiencia resuelta para este turno y la regla que la eligió.
+    tier: str = "default"
+    tier_rule: str = "default"
 
 
 class SessionDebugInfo(BaseModel):

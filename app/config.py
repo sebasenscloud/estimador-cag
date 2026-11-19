@@ -15,7 +15,13 @@ class Settings(BaseSettings):
     cache_max_entries: int = 128
     # Output guardrail: proyectos más largos que esto se consideran fuera de scope.
     scope_max_weeks: int = 104
-    prompt_version: str = "v1"
+    # v2 agrega el bloque <audience> que cambia según el tier resuelto.
+    prompt_version: str = "v2"
+    # Tier dinámico: términos técnicos distintos para pasar a "developer" y
+    # tamaño de equipo para pasar a "pm".
+    tier_technical_terms: int = 2
+    # Equipo chico (<= 2) pasa a "pm" (regla low_budget_pm del curso).
+    tier_small_team_size: int = 2
     # Sesiones: turnos (user + assistant) que conserva la ventana deslizante.
     session_max_turns: int = 6
     # Anclas: heuristic (8 reglas, sin LLM) o llm (clasificador, una llamada más).

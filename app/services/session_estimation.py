@@ -40,6 +40,7 @@ from app.schemas import (
 from app.services.llm_wrapper import generate_structured_from_messages
 from app.services.metadata_extractor import extract_project_metadata
 from app.sessions import ProjectMetadata, session_store
+from app.tiers import resolve_tier
 
 logger = structlog.get_logger()
 
@@ -74,9 +75,17 @@ def estimate_in_session(
 def _run_turn(
     session, request: EstimationRequest, processed: list[ProcessedAttachment]
 ) -> SessionEstimationResponse:
+    # Tier dinámico: se deduce del texto del turno y de la metadata (no de las anclas).
+    tier = resolve_tier(request.description, session.metadata)
+    session.last_resolved_tier = tier.tier
+    session.last_tier_rule = tier.rule
+
     def build_system_prompt(metadata: ProjectMetadata) -> str:
         system_prompt, _ = render_estimation_prompt(
-            request, version=settings.prompt_version, project_metadata=metadata
+            request,
+            version=settings.prompt_version,
+            project_metadata=metadata,
+            tier=tier.tier,
         )
         return system_prompt
 
@@ -151,6 +160,8 @@ def _run_turn(
         metadata_changes=metadata_changes,
         anchor_rules=anchor.matched_rules,
         anchor_reason=anchor.reason or None,
+        tier=tier.tier,
+        tier_rule=tier.rule,
     )
 
 

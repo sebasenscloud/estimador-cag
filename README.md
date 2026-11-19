@@ -242,6 +242,33 @@ Demo del curso, reproducida en `tests/test_compression.py` (`max_turns=6`, NDA e
 | 7 | 12 | 2 | 0 | Sale el turno 1: es ancla (`nda`) |
 | 8 | 12 | 2 | > 0 | Sale el turno 2: va al resumen |
 
+### Tier dinámico: la misma estimación para audiencias distintas
+
+Un solo prompt (`app/prompts/estimation/v2/system.j2`) con un bloque `<audience>` que cambia según el tier. Es Jinja en lugar de cuatro prompts: un arreglo común se hace una sola vez.
+
+| Tier | Para quién | Cómo cambia la respuesta |
+|---|---|---|
+| `executive` | Sponsor, dirección | Cifra defendible, riesgos primero, 3-4 fases, sin jerga |
+| `pm` | Jefe de proyecto | Hitos, quién entrega qué, máximo 4 fases, confianza prudente |
+| `developer` | Tech lead | Stack, integraciones, riesgo técnico por fase, hasta 6-8 fases |
+| `default` | Audiencia mixta | Equilibrio entre negocio y técnica, sin ajustes |
+
+**Dinámico, no estático.** Si el cliente fijara el tier, fallaría en conversaciones largas: empieza el comercial y termina el CTO. `resolve_tier` (`app/tiers.py`) lo deduce en cada turno a partir del **texto del turno y del `project_metadata`**, no de las anclas. Gana la primera regla que aplica:
+
+| Regla | Tier | Pista |
+|---|---|---|
+| `nda_detected` | `executive` | NDA, confidencialidad o embargo en el turno o en `agreed_scope` |
+| `regulatory_context` | `executive` | Normativa (GDPR, HIPAA, CCPA...) en el turno, `agreed_scope` o `mentioned_technologies` |
+| `technical_audience` | `developer` | El turno nombra al menos `TIER_TECHNICAL_TERMS` (2) términos técnicos distintos |
+| `low_budget_pm` | `pm` | `assumed_team_size` es como mucho `TIER_SMALL_TEAM_SIZE` (2): proyecto chico |
+| `default` | `default` | Ninguna pista |
+
+Las reglas, el orden y los umbrales son los del curso (se ajustan por `.env`); la lista de términos técnicos y las regex en español son propias. Antes de la cadena, un `override` explícito gana (`explicit_override`), y un predicado que falla se loguea (`tier_rule_predicate_failed`) y se salta. Cada turno devuelve `tier` y `tier_rule`, el log `tier_resolved` los registra, y `GET /sessions/{id}` muestra los del último turno.
+
+La estructura sigue al `tier_resolver.py` del curso: enum `Tier`, `ResolutionContext` (transcript, metadata, override opcional) y una lista de `TierRule(name, tier, predicate)`. Un NDA del turno 1 sigue resolviendo `executive` en los turnos siguientes solo si el extractor lo dejó en `agreed_scope`; si no, vuelve a `default` aunque esté anclado. Queda abierta la pregunta de la clase: ¿debería el resolver mirar también las anclas?
+
+Cada familia de prompts se versiona por separado: `PROMPT_VERSION=v2` cambia el prompt de estimación, pero el extractor de metadata y el summarizer siguen en su propia `v1`.
+
 ### Debug: `GET /api/v1/sessions/{session_id}`
 
 Expone cómo se está gestionando la memoria de la sesión, sin el contenido de los mensajes:
@@ -253,11 +280,9 @@ Expone cómo se está gestionando la memoria de la sesión, sin el contenido de 
 | `message_count` | Mensajes de la ventana (sin system, resumen ni anclas) |
 | `anchors_count` | Mensajes anclados que ya salieron de la ventana y viajan literales |
 | `summary_chars` | Largo del resumen acumulado |
-| `last_resolved_tier` / `last_tier_rule` | Tier de modelo elegido en el último turno y la regla que lo eligió (Sesión 6; hoy `null`) |
+| `last_resolved_tier` / `last_tier_rule` | Audiencia resuelta en el último turno y la regla que la eligió |
 | `project_metadata` | La memoria estructurada actual |
 | `last_llm_calls` | Métricas de las llamadas al LLM del último turno |
-
-Los campos de tier ya forman parte del contrato aunque esa pieza todavía no exista: así el endpoint no cambia de forma cuando se implementen.
 
 ### `project_metadata` en el system prompt
 
@@ -470,7 +495,9 @@ Las API keys se leen siempre desde `.env`. Nunca están escritas en el código, 
 | `ATTACHMENT_MAX_BYTES` | Tamaño máximo por adjunto | `10485760` |
 | `ATTACHMENT_MAX_CHARS` | Caracteres de texto extraídos por adjunto | `20000` |
 | `SCOPE_MAX_WEEKS` | Duración máxima antes de considerar el pedido fuera de scope | `104` |
-| `PROMPT_VERSION` | Versión de las plantillas en `app/prompts/estimation/` | `v1` |
+| `PROMPT_VERSION` | Versión del prompt de estimación (`v2` agrega el bloque `<audience>`) | `v2` |
+| `TIER_TECHNICAL_TERMS` | Términos técnicos distintos para resolver `developer` | `2` |
+| `TIER_SMALL_TEAM_SIZE` | Equipo máximo para resolver `pm` | `2` |
 | `ESTIMATOR_API_URL` | Dirección del servicio IA que usa el cliente | `http://127.0.0.1:8000` |
 | `ESTIMATOR_API_TIMEOUT` | Segundos que el cliente espera la respuesta | `300` |
 

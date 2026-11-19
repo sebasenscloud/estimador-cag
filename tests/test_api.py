@@ -59,7 +59,7 @@ def test_estimate_returns_structured_result(received, estimation_result):
     assert response.status_code == 200
     body = response.json()
     assert body["result"] == estimation_result.model_dump()
-    assert body["prompt_version"] == "v1"
+    assert body["prompt_version"] == settings.prompt_version
     assert body["cached"] is False
 
 

@@ -12,7 +12,6 @@ tiene sentido perderla porque falló la actualización de la memoria.
 
 import structlog
 
-from app.config import settings
 from app.prompts.loader import render_metadata_extraction_prompt
 from app.schemas import EstimationResult, LLMCallMetrics
 from app.services.llm_wrapper import (
@@ -24,6 +23,10 @@ from app.sessions import ProjectMetadata
 
 logger = structlog.get_logger()
 
+# Cada familia de prompts se versiona por separado: que la estimación pase a v2
+# no cambia el prompt del extractor.
+PROMPT_VERSION = "v1"
+
 
 def extract_project_metadata(
     current: ProjectMetadata,
@@ -32,7 +35,7 @@ def extract_project_metadata(
 ) -> tuple[ProjectMetadata, LLMCallMetrics | None]:
     """Devuelve la ficha actualizada y las métricas de la llamada (None si falló)."""
     system_prompt, header = render_metadata_extraction_prompt(
-        current, version=settings.prompt_version
+        current, version=PROMPT_VERSION
     )
     messages = [
         {"role": "system", "content": system_prompt},

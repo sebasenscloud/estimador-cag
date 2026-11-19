@@ -30,6 +30,9 @@ from app.sessions import ConversationHistory
 
 logger = structlog.get_logger()
 
+# Versión del prompt del summarizer, independiente de PROMPT_VERSION (estimación).
+PROMPT_VERSION = "v1"
+
 
 class _ConversationSummary(BaseModel):
     summary: str = Field(description="El resumen completo y actualizado.")
@@ -54,7 +57,7 @@ def apply_compression(history: ConversationHistory) -> LLMCallMetrics | None:
         history.summary,
         to_summarize,
         max_chars=settings.summary_max_chars,
-        version=settings.prompt_version,
+        version=PROMPT_VERSION,
     )
     try:
         call = generate_structured(

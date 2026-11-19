@@ -29,6 +29,8 @@ from app.schemas import (
     EstimationStreamEvent,
 )
 from app.services.llm_wrapper import generate_structured, stream_structured
+from app.sessions import ProjectMetadata
+from app.tiers import resolve_tier
 
 logger = structlog.get_logger()
 
@@ -55,8 +57,9 @@ def estimate(request: EstimationRequest) -> EstimationResponse:
         return _response(cached, cached=True)
 
     # 3. Render prompt
+    tier = resolve_tier(request.description, ProjectMetadata())
     system_prompt, user_message = render_estimation_prompt(
-        request, version=settings.prompt_version
+        request, version=settings.prompt_version, tier=tier.tier
     )
 
     # 4. LLM + Instructor (fix · retry)
@@ -83,8 +86,9 @@ def stream_estimate(request: EstimationRequest) -> Iterator[EstimationStreamEven
         return
 
     # 3. Render prompt
+    tier = resolve_tier(request.description, ProjectMetadata())
     system_prompt, user_message = render_estimation_prompt(
-        request, version=settings.prompt_version
+        request, version=settings.prompt_version, tier=tier.tier
     )
 
     # 4. LLM + Instructor en streaming parcial
