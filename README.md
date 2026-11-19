@@ -429,6 +429,39 @@ El mensaje `user` no se arma concatenando strings, sino como una **lista de bloq
 | `generate_structured_from_messages` (`llm_wrapper`) | Recibe el array `messages` completo, con `content` como string o como lista de bloques |
 | `ATTACHMENT_STRATEGY` | Elige el procesador |
 
+## Actor-Critic-Boss: auditar en vez de inventar
+
+`POST /api/v1/sessions/{id}/estimate-acb` tiene el mismo contrato multipart que `/estimate` (incluido el `tier` opcional), pero la estimación pasa por tres roles con separación estricta (patrón de «Building Effective Agents», Anthropic):
+
+| Rol | Qué hace | Dónde |
+|---|---|---|
+| **Actor** | Produce un borrador; no decide si vale | El mismo pipeline de `/estimate` |
+| **Critic** | Audita y señala defectos; no reescribe | `app/services/critic.py`, `app/prompts/critic/v1/` |
+| **Boss** | Decide qué hacer con la auditoría | `app/services/boss.py` |
+
+Evita los dos fallos del patrón: el **bucle infinito** (el crítico siempre encuentra algo; el Boss pone el límite `BOSS_MAX_ITERATIONS=3` y el plan B) y el **sesgo de confirmación** (con crítica en texto libre el actor se justifica; con crítica estructurada sabe qué campo rehacer).
+
+**Actor: la pieza que ya teníamos, con otro contrato.** No hay código nuevo de actor. El prompt `estimation/v3` es la v2 más un bloque `<critic_feedback>` en `user.j2` que Jinja agrega solo cuando hay feedback: cero ramas en Python. Orden del turno: guardrail de entrada → tier → prompt → LLM → guardrail de salida (en cada borrador) → metadata → historial + compresión. A la sesión llega solo el resultado final: los borradores son de usar y tirar.
+
+**Critic: feedback estructurado, nunca texto libre.** `CriticFeedback` (`app/schemas/critic.py`) tiene un veredicto (`accept`, `needs_iteration`, `reject`) e issues con `category` (7: `math_error`, `hallucination`, `scope_mismatch`, `phase_imbalance`, `missing_assumption`, `unrealistic_estimate`, `tier_mismatch`), `severity`, `field_path` (`phases[2].cost_eur`) y `suggested_fix`. Iterar exige al menos un issue critical o major: por detalles menores no se gasta otra llamada. Si el crítico falla, devuelve `accept` con `confidence_in_review=0` y el log `critic_failed_fallback_accept` lo delata. `CRITIC_MODEL` permite un modelo distinto (vacío = `LLM_MODEL`).
+
+**Boss: tres salidas.**
+
+| Crítico dice | Rondas | Boss decide | Qué pasa |
+|---|---|---|---|
+| accept | — | accept | Devuelve el borrador |
+| reject | — | synthesize | No tiene arreglo con este actor |
+| needs_iteration | quedan | iterate | Vuelve al actor con el feedback |
+| needs_iteration | no quedan | synthesize | Lo intentó y no convergió |
+
+Es stateless y recibe **funciones** (actor y crítico), así los tests inyectan falsos sin mocks. *Synthesize* no tira el trabajo: devuelve el último borrador con «⚠ Advertencias abiertas…» delante y la confianza a la mitad, con piso en `LOW_CONFIDENCE_PCT` (40) para no caer en «Out of scope».
+
+La respuesta trae `acb` (`final_decision`, `iterations_run` y por ronda el veredicto, la confianza y los issues) y `llm_calls` con cada llamada del actor (`estimation`) y del crítico (`critic`). Streamlit tiene el selector «Modo de estimación» y muestra la traza desplegable bajo el resultado. `python -m evals.run --mode acb` corre el dataset por este camino y guarda `evals/acb.json`.
+
+**Trade-offs.** Cuesta 3-7 llamadas por turno en lugar de 2. Conviene para clientes importantes, proyectos con NDA o normativa, o cualquier agente que escribe y puede contradecirse; no para estimaciones rápidas, conversaciones de 1-2 turnos o cuando el costo por llamada pesa más que la mejora.
+
+Diferencias con el curso: las respuestas de ambos endpoints comparten `SessionEstimationResponse` (con `acb` vacío en modo actor) en lugar de un `ACBResponse` aparte; el piso de confianza es nuestro umbral (40, el curso usa 30); y si el borrador es «Out of scope», las advertencias van detrás del prefijo y la confianza no se toca.
+
 ## Evals: golden dataset
 
 `evals/golden_dataset.json` tiene 16 casos que se evalúan como una suite de tests. Es el dataset del curso (rama `session_05_live`): casos felices de los cuatro tipos de proyecto, dos fuera de scope (pedido vago y adversarial), casos con NDA, HIPAA y GDPR que esperan tier `executive`, uno de equipo chico (`pm`), uno de microservicios (`developer`) y un borde con deadline apretado.
@@ -480,7 +513,7 @@ uv run python -m evals.run --mode actor --limit 8
 
 **Llama al LLM real y tiene costo.** Cada caso usa una sesión nueva para que no se contaminen. Imprime una fila por caso y un resumen por métrica, y guarda el reporte en `evals/actor.json` (latencia, métricas, tier resuelto contra `expected_tier`, llamadas y costo en USD) para hacer diff entre corridas. Un caso que falla (502, timeout) se registra como error y la corrida sigue. Sale con código 1 si algún caso no pasa todo.
 
-Sigue al runner del curso con tres diferencias: por ahora solo hay modo `actor` (`acb` llega con Actor-Critic-Boss), un rechazo del guardrail de entrada en un caso que espera fuera de scope se puntúa como respuesta `Out of scope:` con nuestro contrato (en el curso, costo 0 / 1 semana), y el tier se registra pero no cuenta para pasar o fallar.
+Sigue al runner del curso con dos diferencias: un rechazo del guardrail de entrada en un caso que espera fuera de scope se puntúa como respuesta `Out of scope:` con nuestro contrato (en el curso, costo 0 / 1 semana), y el tier se registra pero no cuenta para pasar o fallar.
 
 ## Estructura
 
@@ -564,7 +597,9 @@ Las API keys se leen siempre desde `.env`. Nunca están escritas en el código, 
 | `ATTACHMENT_MAX_BYTES` | Tamaño máximo por adjunto | `10485760` |
 | `ATTACHMENT_MAX_CHARS` | Caracteres de texto extraídos por adjunto | `20000` |
 | `SCOPE_MAX_WEEKS` | Duración máxima antes de considerar el pedido fuera de scope | `104` |
-| `PROMPT_VERSION` | Versión del prompt de estimación (`v2` agrega el bloque `<audience>`) | `v2` |
+| `PROMPT_VERSION` | Versión del prompt de estimación (`v2` agrega `<audience>`; `v3` suma `<critic_feedback>`) | `v3` |
+| `CRITIC_MODEL` | Modelo del crítico del ACB (vacío = `LLM_MODEL`) | vacío |
+| `BOSS_MAX_ITERATIONS` | Rondas máximas del ACB (cada una = actor + crítico) | `3` |
 | `MODERATION_ENABLED` | Capa de moderación del guardrail de entrada (necesita `OPENAI_API_KEY`) | `true` |
 | `MODERATION_MODEL` | Modelo de moderación de OpenAI | `omni-moderation-latest` |
 | `TIER_TECHNICAL_TERMS` | Términos técnicos distintos para resolver `developer` | `2` |

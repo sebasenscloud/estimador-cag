@@ -48,19 +48,74 @@ def get_session(session_id: str) -> SessionDebugInfo:
         raise HTTPException(status_code=404, detail=str(error))
 
 
+# multipart/form-data: JSON y archivos no pueden ir en el mismo body, así que
+# los campos tipados llegan como Form (FastAPI valida los enums igual) y los
+# archivos como UploadFile. Los dos endpoints comparten el mismo contrato.
+Transcript = Annotated[str, Form()]
+ProjectTypeForm = Annotated[ProjectType, Form()]
+DetailLevelForm = Annotated[DetailLevel, Form()]
+OutputFormatForm = Annotated[OutputFormat, Form()]
+Attachments = Annotated[list[UploadFile] | None, File()]
+# Override humano del tier: si viene, gana sobre el resolver (explicit_override).
+TierForm = Annotated[Tier | None, Form()]
+
+
 @router.post("/{session_id}/estimate", response_model=SessionEstimationResponse)
 async def estimate_in_session(
     session_id: str,
-    # multipart/form-data: JSON y archivos no pueden ir en el mismo body, así que
-    # los campos tipados llegan como Form (FastAPI valida los enums igual) y los
-    # archivos como UploadFile.
-    transcript: Annotated[str, Form()],
-    project_type: Annotated[ProjectType, Form()],
-    detail_level: Annotated[DetailLevel, Form()] = DetailLevel.MEDIUM,
-    output_format: Annotated[OutputFormat, Form()] = OutputFormat.PHASES_TABLE,
-    attachments: Annotated[list[UploadFile] | None, File()] = None,
-    # Override humano del tier: si viene, gana sobre el resolver (explicit_override).
-    tier: Annotated[Tier | None, Form()] = None,
+    transcript: Transcript,
+    project_type: ProjectTypeForm,
+    detail_level: DetailLevelForm = DetailLevel.MEDIUM,
+    output_format: OutputFormatForm = OutputFormat.PHASES_TABLE,
+    attachments: Attachments = None,
+    tier: TierForm = None,
+) -> SessionEstimationResponse:
+    """Modo actor: una llamada de estimación (más metadata)."""
+    return await _estimate_turn(
+        session_id,
+        transcript,
+        project_type,
+        detail_level,
+        output_format,
+        attachments,
+        tier,
+        acb=False,
+    )
+
+
+@router.post("/{session_id}/estimate-acb", response_model=SessionEstimationResponse)
+async def estimate_in_session_acb(
+    session_id: str,
+    transcript: Transcript,
+    project_type: ProjectTypeForm,
+    detail_level: DetailLevelForm = DetailLevel.MEDIUM,
+    output_format: OutputFormatForm = OutputFormat.PHASES_TABLE,
+    attachments: Attachments = None,
+    tier: TierForm = None,
+) -> SessionEstimationResponse:
+    """Actor-Critic-Boss: mismo contrato; la respuesta trae `acb` con la traza
+    de rondas (veredicto, confianza e issues del crítico, decisión del Boss)."""
+    return await _estimate_turn(
+        session_id,
+        transcript,
+        project_type,
+        detail_level,
+        output_format,
+        attachments,
+        tier,
+        acb=True,
+    )
+
+
+async def _estimate_turn(
+    session_id: str,
+    transcript: str,
+    project_type: ProjectType,
+    detail_level: DetailLevel,
+    output_format: OutputFormat,
+    attachments: list[UploadFile] | None,
+    tier: Tier | None,
+    acb: bool,
 ) -> SessionEstimationResponse:
     try:
         request = EstimationRequest(
@@ -78,7 +133,7 @@ async def estimate_in_session(
     ]
 
     with structlog.contextvars.bound_contextvars(
-        session_id=session_id, project_type=project_type.value
+        session_id=session_id, project_type=project_type.value, acb=acb
     ):
         try:
             # La llamada al LLM es bloqueante: se ejecuta en un hilo para no frenar
@@ -89,6 +144,7 @@ async def estimate_in_session(
                 request,
                 files,
                 tier,
+                acb,
             )
         except InputGuardrailViolation as error:
             raise HTTPException(status_code=400, detail=guardrail_detail(error))

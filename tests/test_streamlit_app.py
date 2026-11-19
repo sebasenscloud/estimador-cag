@@ -130,6 +130,15 @@ def test_a_forced_tier_is_sent_as_override(service):
     assert not app.exception
 
 
+def test_acb_mode_posts_to_estimate_acb(service):
+    app = run_app()
+    app.radio[0].set_value("acb")
+    app = send(app)
+
+    assert service.turns[0].url.endswith("/sesion-1/estimate-acb")
+    assert not app.exception
+
+
 def test_conversation_and_memory_are_shown(service):
     app = send(send(run_app()))
 

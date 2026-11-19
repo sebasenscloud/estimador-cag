@@ -18,8 +18,13 @@ class Settings(BaseSettings):
     moderation_model: str = "omni-moderation-latest"
     # Output guardrail: proyectos más largos que esto se consideran fuera de scope.
     scope_max_weeks: int = 104
-    # v2 agrega el bloque <audience> que cambia según el tier resuelto.
-    prompt_version: str = "v2"
+    # v2 agrega el bloque <audience>; v3 suma <critic_feedback> para el modo
+    # Actor-Critic-Boss (sin feedback renderiza igual que v2).
+    prompt_version: str = "v3"
+    # Actor-Critic-Boss: modelo del crítico (vacío = LLM_MODEL) y rondas máximas
+    # (cada ronda = 1 llamada del actor + 1 del crítico).
+    critic_model: str | None = None
+    boss_max_iterations: int = 3
     # Tier dinámico: términos técnicos distintos para pasar a "developer" y
     # tamaño de equipo para pasar a "pm".
     tier_technical_terms: int = 2

@@ -1,0 +1,27 @@
+<mensaje_original>
+{{ transcript }}
+</mensaje_original>
+
+<project_metadata>
+- project_name: {{ metadata.project_name or "desconocido" }}
+- assumed_team_size: {{ metadata.assumed_team_size or "desconocido" }}
+- mentioned_technologies: {{ metadata.mentioned_technologies | join(", ") if metadata.mentioned_technologies else "ninguna" }}
+- agreed_scope: {{ metadata.agreed_scope or "sin acordar" }}
+</project_metadata>
+
+<detail_level>{{ detail_level }}</detail_level>
+<tier_resuelto>{{ tier }}</tier_resuelto>
+
+<estimacion_a_revisar>
+summary: {{ result.summary }}
+confidence_pct: {{ result.confidence_pct }}
+total_duration_weeks: {{ result.total_duration_weeks }}
+total_cost_eur: {{ result.total_cost_eur }}
+phases:
+{% for phase in result.phases %}
+- index {{ loop.index0 }}: {{ phase.name }} | {{ phase.duration_weeks }} semanas | {{ phase.cost_eur }} EUR | confianza {{ phase.confidence_pct }}%
+  description: {{ phase.description }}
+{% endfor %}
+</estimacion_a_revisar>
+
+Auditá esta estimación y devolvé un CriticFeedback según el schema. Sé específico en field_path.

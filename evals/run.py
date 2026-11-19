@@ -5,6 +5,7 @@ TestClient, en el mismo proceso: no hace falta levantar el servidor. Con
 --http BASE apunta a un servicio real.
 
     uv run python -m evals.run --mode actor --limit 8
+    uv run python -m evals.run --mode acb --limit 8
     uv run python -m evals.run --mode actor --http http://127.0.0.1:8000
 
 ATENCIÓN: llama al LLM real (cuesta plata). Cada caso usa una sesión nueva
@@ -15,7 +16,6 @@ evals/<mode>.json para poder hacer diff entre corridas.
 
 Diferencias con el curso:
 
-- Solo modo actor por ahora; acb llega con el patrón Actor-Critic-Boss.
 - Si el guardrail de entrada rechaza (400) un caso que espera fuera de scope,
   eso ES el resultado esperado: se sintetiza una respuesta con nuestro
   contrato (prefijo "Out of scope:" y una fase) para que las métricas lo
@@ -101,7 +101,8 @@ def run_case(
     session_id = client.post(API).json()["session_id"]
     try:
         start = time.perf_counter()
-        response = client.post(f"{API}/{session_id}/estimate", data=_form_body(case))
+        endpoint = "estimate-acb" if mode == "acb" else "estimate"
+        response = client.post(f"{API}/{session_id}/{endpoint}", data=_form_body(case))
         latency_ms = int((time.perf_counter() - start) * 1000)
         synthetic = _maybe_guardrail_payload(case, response)
         if synthetic is not None:
@@ -154,6 +155,8 @@ def run(
                 "tier": payload.get("tier"),
                 "tier_rule": payload.get("tier_rule"),
                 "expected_tier": case.expected_tier,
+                "acb_final_decision": (payload.get("acb") or {}).get("final_decision"),
+                "acb_iterations": (payload.get("acb") or {}).get("iterations_run"),
                 "llm_calls": len(payload.get("llm_calls", [])),
                 "cost_usd": sum(
                     call.get("cost_usd") or 0 for call in payload.get("llm_calls", [])
@@ -175,7 +178,7 @@ def run(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("actor",), default="actor")
+    parser.add_argument("--mode", choices=("actor", "acb"), default="actor")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument(
         "--http", default=None, help="URL base, ej. http://127.0.0.1:8000"

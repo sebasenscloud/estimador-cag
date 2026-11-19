@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.critic import BossTrace
 from app.schemas.llm import LLMCallMetrics
 from app.sessions import MetadataChange, ProjectMetadata
 
@@ -138,6 +139,8 @@ class SessionEstimationResponse(BaseModel):
     # Audiencia resuelta para este turno y la regla que la eligió.
     tier: str = "default"
     tier_rule: str = "default"
+    # Solo en /estimate-acb: rondas del crítico y decisión final del Boss.
+    acb: BossTrace | None = None
 
 
 class SessionDebugInfo(BaseModel):

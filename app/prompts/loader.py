@@ -45,6 +45,7 @@ def render_estimation_prompt(
     version: str = "v1",
     project_metadata: ProjectMetadata | None = None,
     tier: str = "default",
+    critic_feedback=None,
 ) -> tuple[str, str]:
     """Devuelve (system, user) renderizados con la versión de prompt indicada.
 
@@ -63,8 +64,35 @@ def render_estimation_prompt(
         "project_metadata": project_metadata or ProjectMetadata(),
         # Solo lo usa v2 (bloque <audience>); v1 lo ignora.
         "tier": tier,
+        # Solo lo usa v3: feedback del crítico en el modo Actor-Critic-Boss. Si es
+        # None, Jinja no agrega el bloque: cero ramas en Python.
+        "critic_feedback": critic_feedback,
     }
 
+    system = environment.get_template("system.j2").render(**context).strip()
+    user = environment.get_template("user.j2").render(**context).strip()
+    return system, user
+
+
+def render_critic_prompt(
+    transcript: str,
+    metadata: ProjectMetadata,
+    tier: str,
+    result,
+    detail_level: str,
+    version: str = "v1",
+) -> tuple[str, str]:
+    """Prompt del crítico del ACB: el criterio vive en el prompt, el formato
+    lo valida Instructor (CriticFeedback)."""
+    environment = _get_environment(version, family="critic")
+    context = {
+        "transcript": transcript.strip(),
+        "metadata": metadata,
+        "tier": tier,
+        "result": result,
+        "detail_level": detail_level,
+        "out_of_scope_prefix": OUT_OF_SCOPE_PREFIX,
+    }
     system = environment.get_template("system.j2").render(**context).strip()
     user = environment.get_template("user.j2").render(**context).strip()
     return system, user

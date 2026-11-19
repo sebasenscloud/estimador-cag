@@ -1,0 +1,18 @@
+<tipo_de_proyecto>{{ project_type_label }}</tipo_de_proyecto>
+
+<descripcion>
+{{ description }}
+</descripcion>
+
+Generá la estimación para este proyecto.
+{% if critic_feedback %}
+
+<critic_feedback>
+Un auditor independiente revisó una versión anterior de tu estimación. Corregí estos problemas antes de responder y no repitas los mismos errores:
+
+{% for issue in critic_feedback.issues %}
+- [{{ issue.severity }}] {{ issue.category }} en `{{ issue.field_path }}`: {{ issue.description }}{% if issue.suggested_fix %} (sugerencia: {{ issue.suggested_fix }}){% endif %}
+
+{% endfor %}
+</critic_feedback>
+{% endif %}

@@ -23,6 +23,7 @@ from app.schemas import (
     ProjectType,
     SessionEstimationResponse,
 )
+from app.schemas.critic import BossTrace
 from app.sessions import ProjectMetadata
 
 SESSIONS_URL = f"{settings.estimator_api_url}/api/v1/sessions"
@@ -32,6 +33,11 @@ ATTACHMENT_MIME_TYPES = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
 
+
+MODE_LABELS = {
+    "actor": "Actor (1 llamada)",
+    "acb": "Actor-Critic-Boss (2-7 llamadas, auditado)",
+}
 
 TIER_LABELS = {
     "auto": "Auto (se deduce del contexto)",
@@ -49,7 +55,11 @@ def create_session() -> str:
 
 
 def send_turn(
-    session_id: str, request: EstimationRequest, files: list, tier: str = "auto"
+    session_id: str,
+    request: EstimationRequest,
+    files: list,
+    tier: str = "auto",
+    acb: bool = False,
 ) -> SessionEstimationResponse:
     """Manda un turno como multipart/form-data y valida la respuesta tipada.
 
@@ -65,7 +75,7 @@ def send_turn(
     if tier != "auto":
         data["tier"] = tier
     response = httpx.post(
-        f"{SESSIONS_URL}/{session_id}/estimate",
+        f"{SESSIONS_URL}/{session_id}/{'estimate-acb' if acb else 'estimate'}",
         data=data,
         files=[
             (
@@ -115,6 +125,22 @@ def start_new_conversation() -> None:
             "¿Está corriendo el servicio IA? Inicialo con: "
             "`uv run uvicorn app.main:app --reload`"
         )
+
+
+def render_acb_trace(trace: BossTrace) -> None:
+    """Traza desplegable del Actor-Critic-Boss bajo el resultado."""
+    title = (
+        f"Traza Actor-Critic-Boss · final: {trace.final_decision} · "
+        f"{trace.iterations_run} ronda(s)"
+    )
+    with st.expander(title):
+        for item in trace.iterations:
+            st.markdown(
+                f"**Ronda {item.iteration}** · crítico: `{item.critic_verdict}` "
+                f"(confianza {item.critic_confidence}) → Boss: `{item.decision_after}`"
+            )
+            for issue in item.issue_summary:
+                st.caption(issue)
 
 
 def render_estimation(result: EstimationResult, output_format: OutputFormat) -> None:
@@ -207,6 +233,8 @@ for turn in st.session_state.turns:
             st.caption("📎 " + ", ".join(turn["attachments"]))
     with st.chat_message("assistant"):
         render_estimation(turn["result"], turn["output_format"])
+        if turn.get("acb"):
+            render_acb_trace(turn["acb"])
 
 with st.form("turn_form", clear_on_submit=True):
     transcript = st.text_area(
@@ -244,6 +272,12 @@ with st.form("turn_form", clear_on_submit=True):
         help="Auto: se deduce del contexto (NDA, normativa, stack, tamaño del "
         "equipo). Otro valor fuerza el tier (override).",
     )
+    mode = st.radio(
+        "Modo de estimación",
+        options=list(MODE_LABELS),
+        format_func=MODE_LABELS.get,
+        horizontal=True,
+    )
     submitted = st.form_submit_button("Enviar", type="primary")
 
 if submitted:
@@ -260,7 +294,11 @@ if submitted:
         try:
             with st.spinner("Estimando y actualizando la memoria del proyecto..."):
                 response = send_turn(
-                    st.session_state.session_id, request, files or [], tier
+                    st.session_state.session_id,
+                    request,
+                    files or [],
+                    tier,
+                    acb=mode == "acb",
                 )
         except httpx.ConnectError:
             st.error(
@@ -287,6 +325,7 @@ if submitted:
                     "attachments": [item.filename for item in response.attachments],
                     "result": response.result,
                     "output_format": request.output_format,
+                    "acb": response.acb,
                 }
             )
             st.session_state.project_metadata = response.project_metadata

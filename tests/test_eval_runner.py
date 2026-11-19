@@ -63,3 +63,17 @@ def test_a_guardrail_rejection_counts_as_out_of_scope(tmp_path):
     assert payload["prompt_version"].startswith("guardrail/")
     assert all(metric.passed for metric in runner.evaluate(case, payload))
     assert not output.exists()
+
+
+def test_acb_mode_hits_the_acb_endpoint(monkeypatch, tmp_path):
+    urls = []
+
+    def fake_run_case(client, case, mode):
+        urls.append(mode)
+        raise RuntimeError("no LLM")
+
+    monkeypatch.setattr(runner, "run_case", fake_run_case)
+
+    runner.main(["--mode", "acb", "--limit", "1", "--output", str(tmp_path / "a.json")])
+
+    assert urls == ["acb"]

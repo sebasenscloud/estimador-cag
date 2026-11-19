@@ -38,6 +38,9 @@ from app.schemas import (
     SessionDebugInfo,
     SessionEstimationResponse,
 )
+from app.schemas.critic import CriticFeedback
+from app.services import boss
+from app.services import critic as critic_service
 from app.services.llm_wrapper import generate_structured_from_messages
 from app.services.metadata_extractor import extract_project_metadata
 from app.sessions import ProjectMetadata, session_store
@@ -51,7 +54,10 @@ def estimate_in_session(
     request: EstimationRequest,
     attachments: list[Attachment],
     tier: Tier | None = None,
+    acb: bool = False,
 ) -> SessionEstimationResponse:
+    """Un turno de la sesión. Con acb=True la estimación pasa por
+    Actor-Critic-Boss; el resto del pipeline es idéntico."""
     session = session_store.get(session_id)
 
     validate_attachments(attachments)
@@ -73,7 +79,7 @@ def estimate_in_session(
         # texto extraído de los adjuntos (camino B). Los PDFs que viajan por el
         # camino multimodal no se pueden revisar en local.
         check_input(_guardrail_text(request.description, processed))
-        return _run_turn(session, request, processed, tier)
+        return _run_turn(session, request, processed, tier, acb)
     finally:
         # Los archivos subidos a la Files API se borran al terminar el turno,
         # haya salido bien o no: su contenido ya quedó en project_metadata.
@@ -95,6 +101,7 @@ def _run_turn(
     request: EstimationRequest,
     processed: list[ProcessedAttachment],
     override: Tier | None = None,
+    acb: bool = False,
 ) -> SessionEstimationResponse:
     # Tier dinámico: se deduce del texto del turno y de la metadata (no de las anclas).
     tier = resolve_tier(request.description, session.metadata, override)
@@ -112,19 +119,35 @@ def _run_turn(
 
     _, user_message = render_estimation_prompt(request, version=settings.prompt_version)
     user_content = build_user_content(user_message, processed)
-    messages = [
-        *session.history.to_messages_list(session.metadata, build_system_prompt),
-        {"role": "user", "content": user_content},
-    ]
+    llm_calls = []
 
-    estimation_call = generate_structured_from_messages(messages, EstimationResult)
-    result = enforce_scope_response(estimation_call.result)
+    def actor(critic_feedback: CriticFeedback | None) -> EstimationResult:
+        """El mismo actor en los dos modos. Solo cambia el mensaje del usuario:
+        con feedback, el template v3 agrega el bloque <critic_feedback>."""
+        _, message = render_estimation_prompt(
+            request, version=settings.prompt_version, critic_feedback=critic_feedback
+        )
+        messages = [
+            *session.history.to_messages_list(session.metadata, build_system_prompt),
+            {"role": "user", "content": build_user_content(message, processed)},
+        ]
+        call = generate_structured_from_messages(messages, EstimationResult)
+        llm_calls.append(call.metrics)
+        # 6 · Guardrail de salida en cada borrador, antes de que lo vea el crítico.
+        return enforce_scope_response(call.result)
 
+    trace = None
+    if acb:
+        result, trace = _run_acb(actor, request, session.metadata, tier.tier, llm_calls)
+    else:
+        result = actor(None)
+
+    # 8 · Metadata antes de 7 · comprimir: si se comprime primero, un hecho que
+    # todavía no llegó a la metadata puede terminar solo en el resumen.
     previous_metadata = session.metadata
     session.metadata, extraction_metrics = extract_project_metadata(
         session.metadata, user_content, result
     )
-    llm_calls = [estimation_call.metrics]
     if extraction_metrics is not None:
         llm_calls.append(extraction_metrics)
 
@@ -183,7 +206,29 @@ def _run_turn(
         anchor_reason=anchor.reason or None,
         tier=tier.tier,
         tier_rule=tier.rule,
+        acb=trace,
     )
+
+
+def _run_acb(actor, request: EstimationRequest, metadata, tier: str, llm_calls):
+    """Actor-Critic-Boss: el crítico audita cada borrador y el Boss decide.
+    Los borradores intermedios no se guardan: a la sesión llega solo el final."""
+
+    def critic(draft: EstimationResult) -> CriticFeedback:
+        feedback, metrics = critic_service.review(
+            request.description, metadata, tier, draft, request.detail_level.value
+        )
+        if metrics is not None:
+            llm_calls.append(metrics)
+        return feedback
+
+    result, trace = boss.run(actor, critic, settings.boss_max_iterations)
+    logger.info(
+        "acb_completed",
+        final_decision=trace.final_decision,
+        iterations=trace.iterations_run,
+    )
+    return result, trace
 
 
 def get_debug_info(session_id: str) -> SessionDebugInfo:
