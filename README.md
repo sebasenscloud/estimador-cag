@@ -456,6 +456,8 @@ Tres reglas de oro:
 
 `evals/dataset.py` valida cada caso con Pydantic (`GoldenCase`) y `load_dataset()` los carga. Las expectativas son opcionales: un caso solo evalúa lo que declara (`expected_out_of_scope`, `expected_tier`, rangos de fases, costo y semanas, términos y tecnologías). `tests/test_golden_dataset.py` lo corre en CI sin llamar al LLM.
 
+Único cambio propio sobre el dataset del curso: en `expected_in_summary`, un término `"a|b"` acepta cualquiera de las alternativas. Nuestro prompt hace que el modelo responda en español y el dataset espera términos en inglés; en la primera corrida, los casos 002, 008, 010 y 011 fallaban solo por eso (`mobile`, `patient`, `booking`, `microservices`).
+
 ### Tres métricas binarias y deterministas
 
 `evals/metrics.py` (portado del curso) evalúa cada par (caso, estimación) sin LLM y dice por qué falló:

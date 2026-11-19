@@ -5,11 +5,25 @@
     "project_type": "web_saas",
     "detail_level": "medium",
     "output_format": "phases_table",
-    "expected_in_summary": ["CRM"],
-    "expected_technologies_any_of": ["React", "Postgres"],
-    "expected_phase_count_range": [3, 6],
-    "expected_cost_range_eur": [15000, 80000],
-    "expected_duration_weeks_range": [4, 16]
+    "expected_in_summary": [
+      "CRM"
+    ],
+    "expected_technologies_any_of": [
+      "React",
+      "Postgres"
+    ],
+    "expected_phase_count_range": [
+      3,
+      6
+    ],
+    "expected_cost_range_eur": [
+      15000,
+      80000
+    ],
+    "expected_duration_weeks_range": [
+      4,
+      16
+    ]
   },
   {
     "id": "case-002-mobile-loyalty",
@@ -17,10 +31,21 @@
     "project_type": "mobile_app",
     "detail_level": "medium",
     "output_format": "phases_table",
-    "expected_in_summary": ["mobile"],
-    "expected_phase_count_range": [3, 7],
-    "expected_cost_range_eur": [25000, 120000],
-    "expected_duration_weeks_range": [6, 20]
+    "expected_in_summary": [
+      "mobile|móvil|app"
+    ],
+    "expected_phase_count_range": [
+      3,
+      7
+    ],
+    "expected_cost_range_eur": [
+      25000,
+      120000
+    ],
+    "expected_duration_weeks_range": [
+      6,
+      20
+    ]
   },
   {
     "id": "case-003-internal-tool-hr",
@@ -28,11 +53,25 @@
     "project_type": "internal_tool",
     "detail_level": "medium",
     "output_format": "phases_table",
-    "expected_in_summary": ["onboarding"],
-    "expected_technologies_any_of": ["Okta", "DocuSign"],
-    "expected_phase_count_range": [3, 6],
-    "expected_cost_range_eur": [12000, 45000],
-    "expected_duration_weeks_range": [4, 12]
+    "expected_in_summary": [
+      "onboarding"
+    ],
+    "expected_technologies_any_of": [
+      "Okta",
+      "DocuSign"
+    ],
+    "expected_phase_count_range": [
+      3,
+      6
+    ],
+    "expected_cost_range_eur": [
+      12000,
+      45000
+    ],
+    "expected_duration_weeks_range": [
+      4,
+      12
+    ]
   },
   {
     "id": "case-004-data-pipeline-etl",
@@ -40,11 +79,25 @@
     "project_type": "data_pipeline",
     "detail_level": "medium",
     "output_format": "phases_table",
-    "expected_in_summary": ["ETL"],
-    "expected_technologies_any_of": ["Snowflake", "dbt"],
-    "expected_phase_count_range": [3, 6],
-    "expected_cost_range_eur": [10000, 45000],
-    "expected_duration_weeks_range": [3, 10]
+    "expected_in_summary": [
+      "ETL"
+    ],
+    "expected_technologies_any_of": [
+      "Snowflake",
+      "dbt"
+    ],
+    "expected_phase_count_range": [
+      3,
+      6
+    ],
+    "expected_cost_range_eur": [
+      10000,
+      45000
+    ],
+    "expected_duration_weeks_range": [
+      3,
+      10
+    ]
   },
   {
     "id": "case-005-out-of-scope-vague",
@@ -68,10 +121,21 @@
     "project_type": "internal_tool",
     "detail_level": "summary",
     "output_format": "phases_table",
-    "expected_in_summary": ["portal"],
-    "expected_phase_count_range": [3, 6],
-    "expected_cost_range_eur": [25000, 150000],
-    "expected_duration_weeks_range": [8, 20],
+    "expected_in_summary": [
+      "portal"
+    ],
+    "expected_phase_count_range": [
+      3,
+      6
+    ],
+    "expected_cost_range_eur": [
+      25000,
+      150000
+    ],
+    "expected_duration_weeks_range": [
+      8,
+      20
+    ],
     "expected_tier": "executive"
   },
   {
@@ -80,11 +144,25 @@
     "project_type": "web_saas",
     "detail_level": "detailed",
     "output_format": "phases_table",
-    "expected_in_summary": ["patient"],
-    "expected_technologies_any_of": ["Cerner", "HIPAA"],
-    "expected_phase_count_range": [4, 8],
-    "expected_cost_range_eur": [60000, 250000],
-    "expected_duration_weeks_range": [10, 26],
+    "expected_in_summary": [
+      "patient|paciente"
+    ],
+    "expected_technologies_any_of": [
+      "Cerner",
+      "HIPAA"
+    ],
+    "expected_phase_count_range": [
+      4,
+      8
+    ],
+    "expected_cost_range_eur": [
+      60000,
+      250000
+    ],
+    "expected_duration_weeks_range": [
+      10,
+      26
+    ],
     "expected_tier": "executive"
   },
   {
@@ -93,11 +171,26 @@
     "project_type": "web_saas",
     "detail_level": "detailed",
     "output_format": "phases_table",
-    "expected_in_summary": ["GDPR"],
-    "expected_technologies_any_of": ["Next.js", "Postgres", "AWS"],
-    "expected_phase_count_range": [4, 8],
-    "expected_cost_range_eur": [50000, 200000],
-    "expected_duration_weeks_range": [10, 24],
+    "expected_in_summary": [
+      "GDPR"
+    ],
+    "expected_technologies_any_of": [
+      "Next.js",
+      "Postgres",
+      "AWS"
+    ],
+    "expected_phase_count_range": [
+      4,
+      8
+    ],
+    "expected_cost_range_eur": [
+      50000,
+      200000
+    ],
+    "expected_duration_weeks_range": [
+      10,
+      24
+    ],
     "expected_tier": "executive"
   },
   {
@@ -106,10 +199,21 @@
     "project_type": "web_saas",
     "detail_level": "summary",
     "output_format": "narrative",
-    "expected_in_summary": ["booking"],
-    "expected_phase_count_range": [2, 5],
-    "expected_cost_range_eur": [3000, 18000],
-    "expected_duration_weeks_range": [2, 8],
+    "expected_in_summary": [
+      "booking|reserva"
+    ],
+    "expected_phase_count_range": [
+      2,
+      5
+    ],
+    "expected_cost_range_eur": [
+      3000,
+      18000
+    ],
+    "expected_duration_weeks_range": [
+      2,
+      8
+    ],
     "expected_tier": "pm"
   },
   {
@@ -118,11 +222,27 @@
     "project_type": "internal_tool",
     "detail_level": "detailed",
     "output_format": "line_items",
-    "expected_in_summary": ["microservices"],
-    "expected_technologies_any_of": ["Kubernetes", "Terraform", "Helm", "gRPC"],
-    "expected_phase_count_range": [4, 8],
-    "expected_cost_range_eur": [40000, 200000],
-    "expected_duration_weeks_range": [10, 26],
+    "expected_in_summary": [
+      "microservices|microservicios"
+    ],
+    "expected_technologies_any_of": [
+      "Kubernetes",
+      "Terraform",
+      "Helm",
+      "gRPC"
+    ],
+    "expected_phase_count_range": [
+      4,
+      8
+    ],
+    "expected_cost_range_eur": [
+      40000,
+      200000
+    ],
+    "expected_duration_weeks_range": [
+      10,
+      26
+    ],
     "expected_tier": "developer"
   },
   {
@@ -131,11 +251,26 @@
     "project_type": "data_pipeline",
     "detail_level": "detailed",
     "output_format": "phases_table",
-    "expected_in_summary": ["streaming"],
-    "expected_technologies_any_of": ["Kafka", "Spark", "Snowflake"],
-    "expected_phase_count_range": [4, 8],
-    "expected_cost_range_eur": [30000, 140000],
-    "expected_duration_weeks_range": [8, 22]
+    "expected_in_summary": [
+      "streaming"
+    ],
+    "expected_technologies_any_of": [
+      "Kafka",
+      "Spark",
+      "Snowflake"
+    ],
+    "expected_phase_count_range": [
+      4,
+      8
+    ],
+    "expected_cost_range_eur": [
+      30000,
+      140000
+    ],
+    "expected_duration_weeks_range": [
+      8,
+      22
+    ]
   },
   {
     "id": "case-013-mobile-fintech",
@@ -143,11 +278,25 @@
     "project_type": "mobile_app",
     "detail_level": "detailed",
     "output_format": "phases_table",
-    "expected_in_summary": ["KYC"],
-    "expected_technologies_any_of": ["Marqeta", "Plaid"],
-    "expected_phase_count_range": [4, 8],
-    "expected_cost_range_eur": [80000, 350000],
-    "expected_duration_weeks_range": [14, 32],
+    "expected_in_summary": [
+      "KYC"
+    ],
+    "expected_technologies_any_of": [
+      "Marqeta",
+      "Plaid"
+    ],
+    "expected_phase_count_range": [
+      4,
+      8
+    ],
+    "expected_cost_range_eur": [
+      80000,
+      350000
+    ],
+    "expected_duration_weeks_range": [
+      14,
+      32
+    ],
     "expected_tier": "executive"
   },
   {
@@ -156,10 +305,21 @@
     "project_type": "internal_tool",
     "detail_level": "medium",
     "output_format": "phases_table",
-    "expected_in_summary": ["editor"],
-    "expected_phase_count_range": [3, 6],
-    "expected_cost_range_eur": [40000, 150000],
-    "expected_duration_weeks_range": [10, 22]
+    "expected_in_summary": [
+      "editor"
+    ],
+    "expected_phase_count_range": [
+      3,
+      6
+    ],
+    "expected_cost_range_eur": [
+      40000,
+      150000
+    ],
+    "expected_duration_weeks_range": [
+      10,
+      22
+    ]
   },
   {
     "id": "case-015-web-saas-marketplace",
@@ -167,11 +327,24 @@
     "project_type": "web_saas",
     "detail_level": "medium",
     "output_format": "phases_table",
-    "expected_in_summary": ["marketplace"],
-    "expected_technologies_any_of": ["Stripe"],
-    "expected_phase_count_range": [4, 7],
-    "expected_cost_range_eur": [35000, 140000],
-    "expected_duration_weeks_range": [8, 22]
+    "expected_in_summary": [
+      "marketplace"
+    ],
+    "expected_technologies_any_of": [
+      "Stripe"
+    ],
+    "expected_phase_count_range": [
+      4,
+      7
+    ],
+    "expected_cost_range_eur": [
+      35000,
+      140000
+    ],
+    "expected_duration_weeks_range": [
+      8,
+      22
+    ]
   },
   {
     "id": "case-016-edge-tight-deadline",
@@ -179,10 +352,23 @@
     "project_type": "web_saas",
     "detail_level": "summary",
     "output_format": "phases_table",
-    "expected_in_summary": ["MVP"],
-    "expected_technologies_any_of": ["Stripe"],
-    "expected_phase_count_range": [2, 5],
-    "expected_cost_range_eur": [6000, 25000],
-    "expected_duration_weeks_range": [1, 4]
+    "expected_in_summary": [
+      "MVP"
+    ],
+    "expected_technologies_any_of": [
+      "Stripe"
+    ],
+    "expected_phase_count_range": [
+      2,
+      5
+    ],
+    "expected_cost_range_eur": [
+      6000,
+      25000
+    ],
+    "expected_duration_weeks_range": [
+      1,
+      4
+    ]
   }
 ]

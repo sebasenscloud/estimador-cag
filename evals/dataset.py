@@ -10,6 +10,10 @@ Rangos, no números exactos: el modelo varía de forma legítima entre
 ejecuciones; el caso detecta lo que se sale de proporción (fuera de
 presupuesto, falta una tecnología, tier equivocado), no cada euro.
 Las expectativas son opcionales: un caso solo evalúa lo que declara.
+
+Cambio propio: en expected_in_summary, "a|b" acepta cualquiera de las
+alternativas. El modelo responde en español y el dataset del curso espera
+términos en inglés (casos 002, 008, 010 y 011).
 """
 
 import json

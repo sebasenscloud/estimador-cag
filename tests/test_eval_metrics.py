@@ -85,3 +85,10 @@ def test_content_recall_needs_terms_and_any_technology():
 
     assert "missing in summary: ['CRM']" in details
     assert "none of ['React', 'Postgres']" in details
+
+
+def test_content_recall_accepts_spanish_alternatives():
+    case = CASE.model_copy(update={"expected_in_summary": ["booking|reserva"]})
+    spanish = result([phase()], summary="Widget de reservas en React.")
+
+    assert ContentRecallMetric().evaluate(case, spanish).passed

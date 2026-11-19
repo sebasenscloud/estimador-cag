@@ -4,7 +4,8 @@ Portadas de evals/metrics.py del curso (rama session_05_live). Viven en el
 repo, en vez de delegar en un juez LLM, para que la suite corra sin LLM y diga
 exactamente por qué falló un caso. Las tres son binarias: score 1.0 o 0.0.
 
-Diferencia con el curso: allí un caso fuera de scope espera el "sobre vacío"
+Diferencias con el curso: en content_recall, un término "a|b" acepta
+cualquiera de las alternativas (el modelo responde en español). Y allí un caso fuera de scope espera el "sobre vacío"
 (costo 0, 1 semana). Nuestro contrato (prompt v1/v2) pide en cambio el prefijo
 "Out of scope:" más una única fase de relevamiento, así que cost_bounds
 verifica eso.
@@ -100,6 +101,15 @@ class CostBoundsMetric:
         return _result(self.name, problems, "cost & duration within bounds")
 
 
+def _mentions(haystack: str, term: str) -> bool:
+    """Un término "a|b" pasa si aparece cualquiera de las alternativas.
+
+    El dataset del curso espera términos en inglés, pero nuestro prompt hace
+    que el modelo responda en español: "booking|reserva" acepta los dos.
+    """
+    return any(option.strip().lower() in haystack for option in term.split("|"))
+
+
 class ContentRecallMetric:
     """Recall liviano: ¿el summary y las fases mencionan lo que le importaba al
     usuario? Los casos fuera de scope se saltan."""
@@ -118,7 +128,7 @@ class ContentRecallMetric:
         ).lower()
         problems: list[str] = []
 
-        missing = [t for t in case.expected_in_summary if t.lower() not in haystack]
+        missing = [t for t in case.expected_in_summary if not _mentions(haystack, t)]
         if missing:
             problems.append(f"missing in summary: {missing}")
         techs = case.expected_technologies_any_of
