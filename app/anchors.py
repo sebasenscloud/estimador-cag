@@ -70,7 +70,7 @@ _HEURISTIC_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
             "budget_locked",
             (
                 r"\b(budget|cap|ceiling)\s+(is\s+)?(locked|fixed|approved|capped)\s+at\b"
-                r"|\bpresupuesto\s+(máximo|tope)\s+(es\s+)?de\b"
+                r"|\bpresupuesto\s+(máximo|tope)\s+(es\s+)?(de\s+)?[\d$€]"
                 r"|\bpresupuesto\s+(está\s+|quedó\s+)?(fijado|topeado|aprobado)\s+en\b"
             ),
         ),

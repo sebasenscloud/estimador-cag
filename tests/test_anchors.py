@@ -28,7 +28,10 @@ client = TestClient(app)
         ("The scope is frozen for phase one.", "scope_frozen"),
         ("El alcance quedó cerrado: solo reservas y pagos.", "scope_frozen"),
         ("The budget is capped at 40k EUR.", "budget_locked"),
-        ("El presupuesto máximo de este proyecto es 40.000 euros.", "budget_locked"),
+        ("El presupuesto máximo de 40.000 euros no se negocia.", "budget_locked"),
+        # Los dos ejemplos de la diapositiva "El fallo de la ventana".
+        ("Firmamos NDA con el cliente.", "nda"),
+        ("Presupuesto tope 50k.", "budget_locked"),
         ("Tiene que cumplir GDPR y PCI-DSS.", "compliance"),
         ("It must go live by March 1st.", "deadline_hard"),
         ("Tiene que salir en producción antes del 1 de marzo.", "deadline_hard"),
@@ -54,6 +57,7 @@ def test_heuristic_rules_detect_hard_commitments(text, rule):
         "Ese es el diseño final que nos gusta.",  # "final" suelto no ancla
         "Es un requisito importante para el cliente.",  # "required/requisito" suelto tampoco
         "El presupuesto todavía no está definido.",
+        "¿Cuál sería el presupuesto máximo razonable?",  # sin monto, no ancla
     ],
 )
 def test_ordinary_messages_are_not_anchored(text):
