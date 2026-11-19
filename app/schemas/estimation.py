@@ -131,6 +131,10 @@ class SessionEstimationResponse(BaseModel):
     llm_calls: list[LLMCallMetrics] = []
     # Qué hechos de project_metadata cambiaron en este turno y de dónde salieron.
     metadata_changes: list[MetadataChange] = []
+    # Reglas que anclaron este turno (no sale del historial); vacía si no es ancla.
+    anchor_rules: list[str] = []
+    # En modo llm, por qué el clasificador ancló (o no) el turno.
+    anchor_reason: str | None = None
 
 
 class SessionDebugInfo(BaseModel):

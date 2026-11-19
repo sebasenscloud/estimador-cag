@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     prompt_version: str = "v1"
     # Sesiones: turnos (user + assistant) que conserva la ventana deslizante.
     session_max_turns: int = 6
+    # Anclas: heuristic (8 reglas, sin LLM) o llm (clasificador, una llamada más).
+    anchor_detection_mode: str = "heuristic"
+    # Turnos anclados que se conservan fuera de la ventana (los más viejos salen).
+    max_anchors: int = 5
     # Adjuntos. ATTACHMENT_STRATEGY: auto (el router elige por documento),
     # local_text (siempre camino B) o multimodal (PDFs siempre por el camino A).
     attachment_strategy: str = "auto"

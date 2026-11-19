@@ -81,54 +81,104 @@ def diff_metadata(
     return changes
 
 
+@dataclass
+class Turn:
+    number: int
+    user: dict
+    assistant: dict
+    # Reglas que anclaron el turno (ver app/anchors.py); vacía si no es ancla.
+    anchor_rules: list[str] = field(default_factory=list)
+
+    @property
+    def is_anchor(self) -> bool:
+        return bool(self.anchor_rules)
+
+
 class ConversationHistory:
-    """Historial de mensajes con ventana deslizante.
+    """Historial de mensajes con ventana deslizante y anclas.
 
     - Un turno es un par (user, assistant). Se guarda completo o no se guarda,
       así nunca queda una respuesta sin su pregunta.
-    - Conserva como máximo `max_turns` pares: al superar el límite, el par más
-      antiguo se descarta (deque con maxlen).
-    - El system prompt es invariante: siempre va primero en `to_messages_list()`.
-      No se guarda en la ventana, sino que se regenera en cada llamada a partir
-      del `project_metadata` actual. Así la memoria del proyecto llega al modelo
-      aunque los turnos donde se mencionó ya hayan salido de la ventana.
+    - La ventana conserva los últimos `max_turns` turnos. Cuando un turno sale:
+        - si es ancla, pasa a la lista de anclas y sigue viajando al LLM;
+        - si no, se descarta (y `add_turn` lo devuelve, para quien quiera
+          resumirlo).
+    - Las anclas también tienen un límite (`max_anchors`): si se supera, sale
+      la más vieja. Un ancla de más queda en el prompt para siempre.
+    - El system prompt es invariante: siempre va primero en `to_messages_list()`
+      y se regenera en cada llamada a partir del `project_metadata` actual.
     """
 
-    def __init__(self, max_turns: int = MAX_TURNS):
+    def __init__(self, max_turns: int = MAX_TURNS, max_anchors: int = 5):
         if max_turns < 1:
             raise ValueError("max_turns tiene que ser al menos 1.")
         self.max_turns = max_turns
-        self._turns: deque[tuple[dict, dict]] = deque(maxlen=max_turns)
+        self.max_anchors = max_anchors
+        self._window: deque[Turn] = deque()
+        self._anchored: list[Turn] = []
+        self._next_number = 1
 
-    def add_turn(self, user_content: str, assistant_content: str) -> None:
-        self._turns.append(
-            (
-                {"role": "user", "content": user_content},
-                {"role": "assistant", "content": assistant_content},
+    def add_turn(
+        self,
+        user_content: str,
+        assistant_content: str,
+        anchor_rules: list[str] | None = None,
+    ) -> Turn | None:
+        """Agrega un turno. Devuelve el turno no anclado que salió de la ventana."""
+        self._window.append(
+            Turn(
+                number=self._next_number,
+                user={"role": "user", "content": user_content},
+                assistant={"role": "assistant", "content": assistant_content},
+                anchor_rules=list(anchor_rules or []),
             )
         )
+        self._next_number += 1
+        if len(self._window) <= self.max_turns:
+            return None
+
+        oldest = self._window.popleft()
+        if not oldest.is_anchor:
+            return oldest
+        self._anchored.append(oldest)
+        if len(self._anchored) > self.max_anchors:
+            self._anchored.pop(0)
+        return None
 
     @property
     def turn_count(self) -> int:
-        return len(self._turns)
+        """Turnos dentro de la ventana."""
+        return len(self._window)
+
+    @property
+    def anchor_count(self) -> int:
+        """Turnos anclados que se conservan, dentro o fuera de la ventana."""
+        in_window = sum(1 for turn in self._window if turn.is_anchor)
+        return len(self._anchored) + in_window
+
+    @property
+    def anchored_turns(self) -> list[Turn]:
+        """Anclas que ya salieron de la ventana y se conservan aparte."""
+        return list(self._anchored)
 
     def to_messages_list(
         self,
         project_metadata: ProjectMetadata,
         build_system_prompt: Callable[[ProjectMetadata], str],
     ) -> list[dict]:
-        """El array `messages` listo para la API: el system prompt regenerado con
-        la metadata actual y, después, los pares de la ventana en orden."""
+        """El array `messages` para la API: system regenerado con la metadata
+        actual, después las anclas que salieron de la ventana y al final la
+        ventana, todo en orden cronológico."""
         messages = [
             {"role": "system", "content": build_system_prompt(project_metadata)}
         ]
-        for user_message, assistant_message in self._turns:
-            messages.extend([user_message, assistant_message])
+        for turn in [*self._anchored, *self._window]:
+            messages.extend([turn.user, turn.assistant])
         return messages
 
     def __len__(self) -> int:
-        """Cantidad de mensajes en la ventana (sin contar el system prompt)."""
-        return len(self._turns) * 2
+        """Mensajes que viajan al LLM (sin contar el system prompt)."""
+        return (len(self._window) + len(self._anchored)) * 2
 
 
 @dataclass
@@ -162,9 +212,8 @@ class Session:
         self.metadata_log.extend(changes)
         return changes
 
-    # Piezas de memoria de la Sesión 6. Existen desde ya para que el endpoint de
-    # debug tenga un contrato estable; se completan al implementar cada una.
-    anchors: list[dict] = field(default_factory=list)
+    # Piezas de memoria de la Sesión 6 que todavía no están implementadas.
+    # Existen desde ya para que el endpoint de debug tenga un contrato estable.
     summary: str = ""
     last_resolved_tier: str | None = None
     last_tier_rule: str | None = None
@@ -186,7 +235,9 @@ class SessionStore:
     def create(self) -> Session:
         session = Session(
             session_id=uuid.uuid4().hex,
-            history=ConversationHistory(max_turns=self.max_turns),
+            history=ConversationHistory(
+                max_turns=self.max_turns, max_anchors=settings.max_anchors
+            ),
         )
         with self._lock:
             self._sessions[session.session_id] = session

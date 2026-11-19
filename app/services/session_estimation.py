@@ -18,6 +18,7 @@ historial y de la memoria del proyecto, no solo del pedido actual.
 
 import structlog
 
+from app.anchors import detect_anchor
 from app.attachments import (
     Attachment,
     ProcessedAttachment,
@@ -96,12 +97,28 @@ def _run_turn(
     if extraction_metrics is not None:
         llm_calls.append(extraction_metrics)
 
+    # Anclas: solo se mira el mensaje del usuario; el assistant entra por arrastre.
+    anchor, anchor_metrics = detect_anchor(request.description)
+    if anchor_metrics is not None:
+        llm_calls.append(anchor_metrics)
+
     # Al historial va el texto del turno, no el de los adjuntos: su contenido ya
     # quedó destilado en project_metadata y así no infla los turnos siguientes.
     session.history.add_turn(
-        _history_user_message(user_message, processed), result.model_dump_json()
+        _history_user_message(user_message, processed),
+        result.model_dump_json(),
+        anchor_rules=anchor.matched_rules,
     )
     session.total_turns += 1
+    if anchor.is_anchor:
+        logger.info(
+            "anchor_detected",
+            session_id=session.session_id,
+            turn=session.total_turns,
+            matched_rules=anchor.matched_rules,
+            reason=anchor.reason or None,
+            mode=settings.anchor_detection_mode,
+        )
     session.last_llm_calls = llm_calls
     metadata_changes = session.record_metadata_change(
         previous_metadata,
@@ -127,6 +144,8 @@ def _run_turn(
         attachments=[_info(item) for item in processed],
         llm_calls=llm_calls,
         metadata_changes=metadata_changes,
+        anchor_rules=anchor.matched_rules,
+        anchor_reason=anchor.reason or None,
     )
 
 
@@ -140,7 +159,7 @@ def get_debug_info(session_id: str) -> SessionDebugInfo:
         window_turns=session.history.turn_count,
         max_turns=session.history.max_turns,
         message_count=len(session.history),
-        anchors_count=len(session.anchors),
+        anchors_count=session.history.anchor_count,
         summary_chars=len(session.summary),
         last_resolved_tier=session.last_resolved_tier,
         last_tier_rule=session.last_tier_rule,

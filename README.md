@@ -178,6 +178,35 @@ El system prompt no se guarda en la ventana: se regenera en cada turno. Así, un
 
 Las sesiones viven en un diccionario del proceso: se pierden al reiniciar el servicio. Es una decisión consciente para esta fase (ver el docstring de `app/sessions.py`).
 
+### Anclas: turnos que no salen de la ventana
+
+La ventana deslizante descarta por **antigüedad**, no por importancia. Un turno donde se firmó el contrato o se fijó el presupuesto no debería perderse por ser viejo. Las anclas (`app/anchors.py`) resuelven eso: un turno anclado, al salir de la ventana, se conserva aparte y sigue viajando al LLM.
+
+**Ocho reglas, cero LLM.** Solo se analiza el mensaje del **usuario**; la respuesta del assistant entra por arrastre, porque se ancla el turno completo.
+
+| Regla | Ejemplos que la disparan |
+|---|---|
+| `nda` | "under embargo", "acuerdo de confidencialidad" |
+| `signed_contract` | "signed the contract", "firmamos el contrato" |
+| `scope_frozen` | "scope is frozen", "el alcance quedó cerrado" |
+| `budget_locked` | "budget is capped at", "presupuesto máximo de" |
+| `compliance` | HIPAA, GDPR/RGPD, SOX, PCI-DSS, FDA, ISO 27001 |
+| `deadline_hard` | "hard deadline", "tiene que salir en producción antes del" |
+| `contractual` | "contractually required", "obligación contractual" |
+| `explicit_commitment` | "we agreed to", "el cliente se comprometió a" |
+
+Las regex en inglés son las del curso, y cada regla suma su equivalente en español. `AnchorMatch` devuelve **todas** las reglas que dispararon, y cada anclaje deja el log `anchor_detected` con ellas.
+
+**Mejor quedarse corto que anclar de más.** Un falso negativo termina en el resumen; un falso positivo queda literal en el prompt para siempre. Por eso las reglas son frases específicas, no palabras sueltas ("final" o "required" solas no anclan), y las anclas tienen su propio límite (`MAX_ANCHORS`).
+
+```
+messages = system + anclas que salieron de la ventana + ventana + user actual   (orden cronológico)
+```
+
+`ANCHOR_DETECTION_MODE=llm` cambia las reglas por un clasificador LLM, para paráfrasis densas ("no nos podemos pasar de 40 mil, ni un euro más"). El clasificador (`_AnchorClassification`) devuelve `is_anchor` y un `reason` de hasta 200 caracteres; en ese modo `matched_rules` es `["llm"]` y el motivo va al log y a `anchor_reason`. Agrega una llamada por turno, que aparece en `llm_calls` con `purpose=anchor_detection`; si el clasificador falla, se usan las reglas.
+
+Cada turno informa sus reglas en `anchor_rules`, y `GET /sessions/{id}` cuenta las anclas en `anchors_count`.
+
 ### Debug: `GET /api/v1/sessions/{session_id}`
 
 Expone cómo se está gestionando la memoria de la sesión, sin el contenido de los mensajes:
@@ -187,13 +216,13 @@ Expone cómo se está gestionando la memoria de la sesión, sin el contenido de 
 | `total_turns` | Turnos completados desde que se creó la sesión |
 | `window_turns` / `max_turns` | Turnos que hoy están en la ventana deslizante y su tamaño máximo |
 | `message_count` | Mensajes user/assistant que viajan al LLM (sin contar el system) |
-| `anchors_count` | Mensajes anclados que no salen de la ventana (Sesión 6; hoy 0) |
+| `anchors_count` | Turnos anclados que se conservan, dentro o fuera de la ventana |
 | `summary_chars` | Largo del resumen acumulativo (Sesión 6; hoy 0) |
 | `last_resolved_tier` / `last_tier_rule` | Tier de modelo elegido en el último turno y la regla que lo eligió (Sesión 6; hoy `null`) |
 | `project_metadata` | La memoria estructurada actual |
 | `last_llm_calls` | Métricas de las llamadas al LLM del último turno |
 
-Los campos de anclas, resumen y tier ya forman parte del contrato aunque esas piezas todavía no existan: así el endpoint no cambia de forma cuando se implementen.
+Los campos de resumen y tier ya forman parte del contrato aunque esas piezas todavía no existan: así el endpoint no cambia de forma cuando se implementen.
 
 ### `project_metadata` en el system prompt
 
@@ -396,6 +425,8 @@ Las API keys se leen siempre desde `.env`. Nunca están escritas en el código, 
 | `LOG_LEVEL` | Nivel de logs | `info` |
 | `MAX_TOKENS` | Largo máximo de la respuesta | `16000` |
 | `CACHE_MAX_ENTRIES` | Respuestas que guarda la caché | `128` |
+| `ANCHOR_DETECTION_MODE` | Detección de anclas: `heuristic` (8 reglas) o `llm` (clasificador) | `heuristic` |
+| `MAX_ANCHORS` | Turnos anclados que se conservan fuera de la ventana | `5` |
 | `SESSION_MAX_TURNS` | Turnos que conserva la ventana deslizante de cada sesión | `6` |
 | `ATTACHMENT_STRATEGY` | Camino para procesar adjuntos (`local_text` = B) | `local_text` |
 | `ATTACHMENT_MAX_FILES` | Adjuntos por petición | `5` |
