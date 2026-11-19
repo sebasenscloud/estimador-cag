@@ -413,6 +413,33 @@ El mensaje `user` no se arma concatenando strings, sino como una **lista de bloq
 | `generate_structured_from_messages` (`llm_wrapper`) | Recibe el array `messages` completo, con `content` como string o como lista de bloques |
 | `ATTACHMENT_STRATEGY` | Elige el procesador |
 
+## Evals: golden dataset
+
+`evals/golden_dataset.json` tiene 16 casos que se evalúan como una suite de tests. Los ocho primeros siguen la tabla del curso (CRM, fidelización, RRHH interna, ETL, pedido vago, prompt injection, NDA y HIPAA) para poder correr `--limit 8` y comparar. Los otros ocho cubren el resto de los tipos de proyecto, un caso mínimo y una migración legacy cerca del tope de scope. Hay casos en español y en inglés.
+
+```json
+{
+  "id": "case-001-web-saas-crm",
+  "transcript": "We want a B2B CRM called Nimbus for the sales team. ...",
+  "project_type": "web_saas",
+  "expected_in_summary": ["CRM"],
+  "expected_technologies_any_of": ["React", "Postgres"],
+  "expected_phase_count_range": [3, 6],
+  "expected_cost_range_eur": [15000, 80000],
+  "expected_duration_weeks_range": [4, 16]
+}
+```
+
+**Rangos, no números exactos.** El modelo varía de forma legítima entre ejecuciones; el caso detecta lo que se sale de proporción, no cada euro.
+
+Tres reglas de oro:
+
+- El dataset vive comiteado: los cambios se ven en un diff.
+- Métricas deterministas siempre que se pueda.
+- Un juez LLM complementa, nunca es el primer escalón.
+
+`evals/dataset.py` valida cada caso con Pydantic (`GoldenCase`: id con formato, rangos ordenados, tipo de proyecto válido) y `tests/test_golden_dataset.py` lo corre en CI sin llamar al LLM. Dos convenciones propias: en `expected_in_summary` un ítem `"a|b"` acepta cualquiera de las alternativas, porque el modelo puede responder en español o en inglés; y una lista vacía en `expected_technologies_any_of` no se evalúa. Los rangos de cada caso son estimaciones propias.
+
 ## Estructura
 
 ```
