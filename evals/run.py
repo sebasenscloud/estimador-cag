@@ -50,6 +50,8 @@ def _form_body(case: GoldenCase) -> dict[str, str]:
         "project_type": case.project_type.value,
         "detail_level": case.detail_level.value,
         "output_format": case.output_format.value,
+        # Como en el curso: "auto" no manda el campo; otro valor es override.
+        **({"tier": case.tier} if case.tier != "auto" else {}),
     }
 
 

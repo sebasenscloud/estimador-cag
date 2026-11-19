@@ -18,6 +18,7 @@ from app.schemas import (
 from app.services import session_estimation
 from app.services.llm_wrapper import InvalidLLMOutputError, LLMProviderError
 from app.sessions import SessionNotFoundError, session_store
+from app.tiers import Tier
 
 logger = structlog.get_logger()
 
@@ -58,6 +59,8 @@ async def estimate_in_session(
     detail_level: Annotated[DetailLevel, Form()] = DetailLevel.MEDIUM,
     output_format: Annotated[OutputFormat, Form()] = OutputFormat.PHASES_TABLE,
     attachments: Annotated[list[UploadFile] | None, File()] = None,
+    # Override humano del tier: si viene, gana sobre el resolver (explicit_override).
+    tier: Annotated[Tier | None, Form()] = None,
 ) -> SessionEstimationResponse:
     try:
         request = EstimationRequest(
@@ -81,7 +84,11 @@ async def estimate_in_session(
             # La llamada al LLM es bloqueante: se ejecuta en un hilo para no frenar
             # el event loop (el endpoint es async para poder leer los archivos).
             return await run_in_threadpool(
-                session_estimation.estimate_in_session, session_id, request, files
+                session_estimation.estimate_in_session,
+                session_id,
+                request,
+                files,
+                tier,
             )
         except InputGuardrailViolation as error:
             raise HTTPException(status_code=400, detail=guardrail_detail(error))

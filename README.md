@@ -279,6 +279,8 @@ Un solo prompt (`app/prompts/estimation/v2/system.j2`) con un bloque `<audience>
 
 Las reglas, el orden y los umbrales son los del curso (se ajustan por `.env`); la lista de términos técnicos y las regex en español son propias. Antes de la cadena, un `override` explícito gana (`explicit_override`), y un predicado que falla se loguea (`tier_rule_predicate_failed`) y se salta. Cada turno devuelve `tier` y `tier_rule`, el log `tier_resolved` los registra, y `GET /sessions/{id}` muestra los del último turno.
 
+**Override humano.** Como en el curso, `POST /api/v1/sessions/{id}/estimate` acepta un campo opcional `tier` (`executive`, `pm`, `developer` o `default`) en el multipart. Si viene, gana sobre el resolver y la regla es `explicit_override`; un valor inválido da 422. Streamlit tiene el selector «Audiencia (tier)»: «Auto» no manda el campo. El `/estimate` sin sesión no lo acepta (tampoco en el curso), así que el tier no necesita estar en la clave del cache. El runner de evals manda `case.tier` cuando el caso no es `auto`.
+
 La estructura sigue al `tier_resolver.py` del curso: enum `Tier`, `ResolutionContext` (transcript, metadata, override opcional) y una lista de `TierRule(name, tier, predicate)`. Un NDA del turno 1 sigue resolviendo `executive` en los turnos siguientes solo si el extractor lo dejó en `agreed_scope`; si no, vuelve a `default` aunque esté anclado. Queda abierta la pregunta de la clase: ¿debería el resolver mirar también las anclas?
 
 Cada familia de prompts se versiona por separado: `PROMPT_VERSION=v2` cambia el prompt de estimación, pero el extractor de metadata y el summarizer siguen en su propia `v1`.

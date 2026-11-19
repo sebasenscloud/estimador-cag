@@ -33,6 +33,15 @@ ATTACHMENT_MIME_TYPES = {
 }
 
 
+TIER_LABELS = {
+    "auto": "Auto (se deduce del contexto)",
+    "executive": "Executive (sponsor, dirección)",
+    "pm": "PM (jefe de proyecto)",
+    "developer": "Developer (tech lead)",
+    "default": "Default (audiencia mixta)",
+}
+
+
 def create_session() -> str:
     response = httpx.post(SESSIONS_URL, timeout=10)
     response.raise_for_status()
@@ -40,17 +49,24 @@ def create_session() -> str:
 
 
 def send_turn(
-    session_id: str, request: EstimationRequest, files: list
+    session_id: str, request: EstimationRequest, files: list, tier: str = "auto"
 ) -> SessionEstimationResponse:
-    """Manda un turno como multipart/form-data y valida la respuesta tipada."""
+    """Manda un turno como multipart/form-data y valida la respuesta tipada.
+
+    tier "auto" no manda el campo (lo resuelve el servicio); otro valor es el
+    override humano.
+    """
+    data = {
+        "transcript": request.description,
+        "project_type": request.project_type.value,
+        "detail_level": request.detail_level.value,
+        "output_format": request.output_format.value,
+    }
+    if tier != "auto":
+        data["tier"] = tier
     response = httpx.post(
         f"{SESSIONS_URL}/{session_id}/estimate",
-        data={
-            "transcript": request.description,
-            "project_type": request.project_type.value,
-            "detail_level": request.detail_level.value,
-            "output_format": request.output_format.value,
-        },
+        data=data,
         files=[
             (
                 "attachments",
@@ -88,6 +104,7 @@ def start_new_conversation() -> None:
     st.session_state.project_metadata = ProjectMetadata()
     st.session_state.last_attachments = []
     st.session_state.metadata_log = []
+    st.session_state.last_tier = None
     try:
         st.session_state.session_id = create_session()
         st.session_state.session_error = None
@@ -220,6 +237,13 @@ with st.form("turn_form", clear_on_submit=True):
         options=list(OutputFormat),
         format_func=lambda option: OUTPUT_FORMAT_LABELS[OutputFormat(option)],
     )
+    tier = st.selectbox(
+        "Audiencia (tier)",
+        options=list(TIER_LABELS),
+        format_func=TIER_LABELS.get,
+        help="Auto: se deduce del contexto (NDA, normativa, stack, tamaño del "
+        "equipo). Otro valor fuerza el tier (override).",
+    )
     submitted = st.form_submit_button("Enviar", type="primary")
 
 if submitted:
@@ -235,7 +259,9 @@ if submitted:
     else:
         try:
             with st.spinner("Estimando y actualizando la memoria del proyecto..."):
-                response = send_turn(st.session_state.session_id, request, files or [])
+                response = send_turn(
+                    st.session_state.session_id, request, files or [], tier
+                )
         except httpx.ConnectError:
             st.error(
                 "No se pudo conectar con el servicio IA en "
@@ -264,6 +290,7 @@ if submitted:
                 }
             )
             st.session_state.project_metadata = response.project_metadata
+            st.session_state.last_tier = (response.tier, response.tier_rule)
             st.session_state.last_attachments = response.attachments
             st.session_state.metadata_log.extend(response.metadata_changes)
             st.rerun()
@@ -272,6 +299,9 @@ with st.sidebar:
     st.header("Sesión")
     st.caption(f"`{st.session_state.session_id}`")
     st.metric("Turnos en la conversación", len(st.session_state.turns))
+    if st.session_state.get("last_tier"):
+        resolved, rule = st.session_state.last_tier
+        st.markdown(f"**Tier resuelto:** {resolved} (`{rule}`)")
     if st.button("Nueva conversación"):
         start_new_conversation()
         st.rerun()

@@ -100,6 +100,7 @@ def test_form_has_transcript_selectors_and_uploader(service):
         "Tipo de proyecto",
         "Nivel de detalle",
         "Formato de salida",
+        "Audiencia (tier)",
     ]
     assert len(app.get("file_uploader")) == 1
 
@@ -116,6 +117,16 @@ def test_turn_is_sent_as_multipart_to_the_session(service):
         "output_format": "phases_table",
     }
     assert turn.files == []
+    assert not app.exception
+
+
+def test_a_forced_tier_is_sent_as_override(service):
+    app = run_app()
+    app.selectbox[3].select("developer")
+    app = send(app)
+
+    assert service.turns[0].data["tier"] == "developer"
+    assert "Tier resuelto:" in sidebar_text(app)
     assert not app.exception
 
 

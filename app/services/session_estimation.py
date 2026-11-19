@@ -41,13 +41,16 @@ from app.schemas import (
 from app.services.llm_wrapper import generate_structured_from_messages
 from app.services.metadata_extractor import extract_project_metadata
 from app.sessions import ProjectMetadata, session_store
-from app.tiers import resolve_tier
+from app.tiers import Tier, resolve_tier
 
 logger = structlog.get_logger()
 
 
 def estimate_in_session(
-    session_id: str, request: EstimationRequest, attachments: list[Attachment]
+    session_id: str,
+    request: EstimationRequest,
+    attachments: list[Attachment],
+    tier: Tier | None = None,
 ) -> SessionEstimationResponse:
     session = session_store.get(session_id)
 
@@ -70,7 +73,7 @@ def estimate_in_session(
         # texto extraído de los adjuntos (camino B). Los PDFs que viajan por el
         # camino multimodal no se pueden revisar en local.
         check_input(_guardrail_text(request.description, processed))
-        return _run_turn(session, request, processed)
+        return _run_turn(session, request, processed, tier)
     finally:
         # Los archivos subidos a la Files API se borran al terminar el turno,
         # haya salido bien o no: su contenido ya quedó en project_metadata.
@@ -88,10 +91,13 @@ def _guardrail_text(description: str, processed: list[ProcessedAttachment]) -> s
 
 
 def _run_turn(
-    session, request: EstimationRequest, processed: list[ProcessedAttachment]
+    session,
+    request: EstimationRequest,
+    processed: list[ProcessedAttachment],
+    override: Tier | None = None,
 ) -> SessionEstimationResponse:
     # Tier dinámico: se deduce del texto del turno y de la metadata (no de las anclas).
-    tier = resolve_tier(request.description, session.metadata)
+    tier = resolve_tier(request.description, session.metadata, override)
     session.last_resolved_tier = tier.tier
     session.last_tier_rule = tier.rule
 

@@ -188,3 +188,38 @@ def test_session_tier_changes_per_turn_and_ignores_anchors(
         "default",
     )
     session_store.delete(session_id)
+
+
+def test_session_endpoint_accepts_a_tier_override(monkeypatch, estimation_result):
+    """Como en el curso: el campo tier del multipart gana sobre el resolver."""
+    systems = []
+    monkeypatch.setattr(settings, "prompt_version", "v2")
+    monkeypatch.setattr(
+        session_estimation,
+        "generate_structured_from_messages",
+        lambda messages, response_model, **kwargs: (
+            systems.append(messages[0]["content"]) or llm_call(estimation_result)
+        ),
+    )
+    monkeypatch.setattr(
+        session_estimation,
+        "extract_project_metadata",
+        lambda current, turn_content, estimation: (current, None),
+    )
+    session_id = client.post("/api/v1/sessions").json()["session_id"]
+    url = f"/api/v1/sessions/{session_id}/estimate"
+    nda = "We signed the NDA: we need a CRM."
+
+    forced = client.post(
+        url, data={"transcript": nda, "project_type": "web_saas", "tier": "developer"}
+    ).json()
+    invalid = client.post(
+        url, data={"transcript": nda, "project_type": "web_saas", "tier": "cto"}
+    )
+    debug = client.get(f"/api/v1/sessions/{session_id}").json()
+
+    assert (forced["tier"], forced["tier_rule"]) == ("developer", "explicit_override")
+    assert "es developer" in systems[0]
+    assert invalid.status_code == 422
+    assert debug["last_tier_rule"] == "explicit_override"
+    session_store.delete(session_id)
