@@ -535,6 +535,34 @@ Mide con números dónde se rompe el CAG: ventana de contexto, costo, latencia o
 
 **Runner** (`evals/stress/run.py`): escenarios × tamaños × repeticiones, una fila de CSV por turno (`evals/stress/results.csv`, no se commitea) y un resumen con P50/P95, costo y % de drift. **Llama al LLM real**: `--max-total-usd` (por defecto 5) corta la corrida si el gasto acumulado lo supera. Con el CSV se completa `evals/stress/REPORT.md`, que tiene los comandos para cada tamaño de corrida.
 
+## Sesión 6: Data-driven AI
+
+Preparar el corpus antes de vectorizar: decidir (CAG, RAG o híbrido) → catalogar → ingerir → limpiar → proteger (PII y GDPR). Hoy no se vectoriza nada: se preparan los datos para que merezcan serlo. Referencia: rama `session_06_live` del curso.
+
+### Pre-flight: el stack sano antes de construir
+
+```bash
+uv run python -m scripts.preflight_s06
+```
+
+`scripts/preflight_s06.py` corre una comprobación por función y sale con código 1 si alguna falla, para no descubrir el problema a mitad de una demo:
+
+| Comprobación | Qué verifica |
+|---|---|
+| Versión de Python | 3.11 o más |
+| Paquetes requeridos | pandas, Pandera, PyYAML, openpyxl, Presidio, spaCy, Faker y el modelo `es_core_news_md`, con versión mínima |
+| spaCy `es_core_news_md` | Que el modelo en español reconozca «Laura Fernández» como persona |
+| Corpus de ejemplo | Que `data/seed/` tenga JSON, TXT y XLSX, y que los textos sean UTF-8 |
+| Catálogo válido | Que `data/catalog/catalog.yaml` valide |
+| Estimador (health) | Que el servicio responda en `ESTIMATOR_API_URL` |
+| Almacén de seudónimos | Que el mismo valor devuelva el mismo seudónimo |
+
+**La más importante es la de spaCy.** Presidio detecta personas con spaCy y por defecto usa el modelo en inglés: sobre nombres hispanos devuelve cero personas **sin avisar**, y la pseudonimización parecería funcionar con los nombres en claro. Por eso `es_core_news_md` es una dependencia fija del proyecto (el wheel oficial de explosion), no un paso manual.
+
+Las piezas que todavía no existen salen como ⏳ pendientes, con el paso que las crea, y no cuentan como falla: el pre-flight crece con la sesión. Errores típicos que cubre o anticipa: archivos en Latin-1 en lugar de UTF-8, el modelo de spaCy ausente y las versiones viejas de Pandera (se importa como `pandera.pandas`).
+
+Diferencias con el curso: no instalamos `unstructured` (cientos de MB; los PDFs ya los resuelven pypdf y PyMuPDF) ni Postgres (la tabla de seudónimos vive en memoria por ahora); el health check es `GET /`.
+
 ## Estructura
 
 ```
