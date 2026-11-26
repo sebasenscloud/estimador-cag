@@ -11,8 +11,8 @@ escenarios × tamaños de adjunto × repeticiones. En cada turno:
 
 El entregable es el CSV; con él se completa a mano evals/stress/REPORT.md.
 
-ATENCIÓN: llama al LLM real. Cada turno cuesta ~USD 0,01-0,035. La matriz
-completa (3 × 5 × 3 × 20 = 900 turnos) ronda los USD 18-25. --max-total-usd
+ATENCIÓN: llama al LLM real. Cada turno cuesta ~USD 0,01-0,05 (medido: USD 0,53 por 20 turnos sin adjuntos). La matriz
+completa (3 × 5 × 3 × 20 = 900 turnos) ronda los USD 25-35. --max-total-usd
 corta la corrida si el gasto acumulado lo supera (por defecto 5).
 
     uv run python -m evals.stress.fixtures.build_pdfs   # una vez
