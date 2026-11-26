@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     attachment_max_files: int = 5
     attachment_max_bytes: int = 10 * 1024 * 1024
     attachment_max_chars: int = 20_000
+    # Sesión 6 · ingesta: catálogo de fuentes (YAML) y raíz de los datos.
+    catalog_path: str = "data/catalog/catalog.yaml"
+    ingestion_data_root: str = "data/seed"
     estimator_api_url: str = "http://127.0.0.1:8000"
     estimator_api_timeout: float = 300.0
 

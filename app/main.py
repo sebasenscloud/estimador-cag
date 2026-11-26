@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 
 from app.config import settings
 from app.logging_config import configure_logging
-from app.routers import estimations, sessions
+from app.routers import estimations, ingestion, sessions
 
 configure_logging(settings.log_level, json_logs=settings.app_env == "production")
 logger = structlog.get_logger()
@@ -14,6 +14,7 @@ app = FastAPI(title="Estimador CAG")
 
 app.include_router(estimations.router)
 app.include_router(sessions.router)
+app.include_router(ingestion.router)
 
 
 @app.middleware("http")

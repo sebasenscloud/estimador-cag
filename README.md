@@ -615,6 +615,37 @@ uv run python -m app.ingestion.catalog.loader data/catalog/catalog.yaml
 
 Reglas del contrato: tres decisiones (`review` es la tercera vía, para no colapsar todo a sí o no); si no es `include`, `decision_reason` es obligatorio; nombres en snake_case y únicos (son el identificador del endpoint de ingesta); `extra="forbid"`. La calidad tiene cuatro dimensiones de 1 a 5 (completitud, consistencia, actualidad, fiabilidad) que **no se promedian**: completitud 5 y fiabilidad 1 no es «calidad 3», son datos completos que pueden ser mentira. Excluir con el motivo escrito es disciplina, no desidia: el `git log` del YAML dice quién decidió qué y por qué.
 
+### Paso 2.3 · Ingesta y Document canónico
+
+**Tres capas y un contrato.**
+
+| Capa | Pregunta | Dónde |
+|---|---|---|
+| Loader | ¿Cómo llego al archivo? (disco hoy; Drive o S3 mañana). Entrega bytes y no sabe qué hay dentro | `app/ingestion/loaders/filesystem.py` |
+| Parser | ¿Qué hay dentro? Uno por formato, todos con la misma firma | `app/ingestion/parsers/` |
+| **Document** | El contrato común: texto + metadatos. Lo único que verá la Sesión 7 | `app/ingestion/documents/models.py` |
+
+`Document` tiene `extra="forbid"` (si un parser cuela un campo no declarado, Pydantic falla: mejor un error fuerte que uno silencioso), un `id` determinista (fuente + ruta + posición, estable entre re-ingestas) y en `metadata` la fuente, la versión del catálogo, el linaje, la sensibilidad y un `extra` con lo propio del formato. `Parser` es un `Protocol` (tipado estructural, sin herencia): cualquier clase con `parse(blob, context)` vale, y agregar un formato es registrar una clase en `ParserRegistry` (un parser por formato).
+
+**Un parser por formato, cada uno con su estrategia:**
+
+- **JSON → Markdown, no `json.dumps`.** Un JSON no se extrae: se decide cómo representarlo. El embedding entiende mejor `## Cliente · BetaNorte` que `{"client_name": "BetaNorte"}`. El parser no limpia (la moneda `eur` pasa tal cual): eso es el paso 2.4.
+- **TXT, un formato con dos modos.** Con etiquetas `[hh:mm:ss] Hablante:` → un Document por turno, con `speaker` y `timestamp`. Sin etiquetas (el archivo de 2023) → un Document por bloque y **sin** `speaker`: no se inventa. Si el archivo viene en Latin-1, se relee así en lugar de llenar el texto de «�».
+- XLSX, DOCX y PDF siguen el mismo patrón; como en el curso, hoy no están registrados.
+
+**La ingesta es offline: 202 y un job.** Indexar tarda y la petición no espera.
+
+```bash
+curl -X POST localhost:8000/api/v1/ingestion/runs -H 'Content-Type: application/json' \
+     -d '{"source_name": "presupuestos_json"}'          # → 202 {job_id, status: pending}
+curl localhost:8000/api/v1/ingestion/jobs/<job_id>        # → completed, documents_count: 6
+curl localhost:8000/api/v1/ingestion/jobs/<job_id>/documents
+```
+
+El router valida la fuente contra el catálogo, crea el job y lanza el orquestador (`app/ingestion/orchestrator.py`) como `BackgroundTask`. **El catálogo manda:** `rate_card_xlsx` y `transcripciones_txt` responden 400 `source_not_included` con el motivo escrito en el YAML, y una fuente desconocida 404 `unknown_source`. El job pasa por `pending → running → completed | failed`.
+
+Diferencias con el curso: los jobs viven en memoria (`app/ingestion/jobs.py`, misma interfaz que el repositorio de Postgres del curso; se pierden al reiniciar); el job guarda también los Documents y `GET /ingestion/jobs/{id}/documents` los muestra (propio, mientras no hay índice); `CATALOG_PATH` e `INGESTION_DATA_ROOT` configuran el catálogo y la raíz de datos.
+
 ## Estructura
 
 ```
