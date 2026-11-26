@@ -646,6 +646,37 @@ El router valida la fuente contra el catálogo, crea el job y lanza el orquestad
 
 Diferencias con el curso: los jobs viven en memoria (`app/ingestion/jobs.py`, misma interfaz que el repositorio de Postgres del curso; se pierden al reiniciar); el job guarda también los Documents y `GET /ingestion/jobs/{id}/documents` los muestra (propio, mientras no hay índice); `CATALOG_PATH` e `INGESTION_DATA_ROOT` configuran el catálogo y la raíz de datos.
 
+### Paso 2.4 · Limpieza y validación
+
+El Document garantiza la **forma**; nada garantiza todavía el **contenido**. Cuatro familias de suciedad en nuestros datos:
+
+| Familia | En los datos | Cómo daña al RAG |
+|---|---|---|
+| Formato heterogéneo | `"eur"` y `"EUR"`; `12/03/2024` y `2024-06-21` | Cada variante es un token distinto |
+| Duplicados divergentes | `BUDGET-2024-0005` en v1 y v2 | Se recupera la que se indexó primero |
+| Nulos disfrazados | `"client_name": "TBD"`, `"contact": "N/A"` | Se vectorizan como si fueran un dato |
+| Fuera de rango | `"total_amount": -50000` | Respuestas muy seguras sobre un absurdo |
+
+**Limpiar y validar son dos pasos distintos** (`app/ingestion/cleaning/`):
+
+1. **Limpieza permisiva que repara y no juzga** (`budget_records.py`, pandas): nulos disfrazados → `NA`, moneda en mayúsculas, fechas con `pd.to_datetime(errors="coerce", dayfirst=True)` (lo inválido pasa a `NaT`), números con `errors="coerce"`, y deduplicación con una **regla de negocio escrita en código**: gana la versión firmada más tarde.
+2. **Validación estricta que decide** (`schemas.py`, Pandera v2, `import pandera.pandas as pa`): `BudgetRecord` exige ids con formato, moneda en {EUR, USD, GBP}, monto entre 0 y 10.000.000 y fecha no nula. `strict=True, coerce=False`: el contrato es estricto siempre; lo que se relaja es la política.
+3. **Política de tres cubetas** (`policy.py`, `lazy=True` para juntar **todos** los errores y no solo el primero):
+
+| Cubeta | Cuándo | Qué pasa |
+|---|---|---|
+| Válida | Pasa todos los chequeos | Sigue al Document |
+| Cuarentena | Grave pero útil tras revisión (`not_nullable`, como una fecha que no se pudo convertir) | No entra al RAG; espera a un dueño |
+| Descartada | Contaminación clara (`greater_than_or_equal_to`, `isin`, `str_matches`) | Fuera, con log |
+
+**Demo** (reproduce la del curso):
+
+```bash
+uv run python -m scripts.demo_cleaning_s06
+```
+
+6 archivos → 5 filas (el dedup se queda con la v2 de `BUDGET-2024-0005`) → **3 válidas, 1 en cuarentena, 1 descartada**. Se descarta `BUDGET-2024-0004` (−50000). Va a cuarentena `BUDGET-2024-0002`, y no el del «TBD»: pandas infiere el formato de fecha de la primera fila (ISO), la española `12/03/2024` no encaja → `NaT` → falla `not_nullable`. El «TBD» del 0003 pasa porque `client_name` admite nulos. La lección: la limpieza no pudo reparar esa fecha y la validación la cazó; por eso son dos pasos. Para repararla habría que parsear cada formato explícitamente (o `format="mixed"`); lo dejamos como en el curso para que la demo muestre la cuarentena.
+
 ## Estructura
 
 ```
