@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     # Sesión 6 · ingesta: catálogo de fuentes (YAML) y raíz de los datos.
     catalog_path: str = "data/catalog/catalog.yaml"
     ingestion_data_root: str = "data/seed"
+    # Sesión 6 · PII: modelo de spaCy que usa Presidio (en español: sin él no
+    # detecta nombres hispanos), locale de Faker para los seudónimos y salt del
+    # HMAC que identifica cada valor original. Rotar el salt invalida todos los
+    # mapeos. CAMBIARLO EN PRODUCCIÓN.
+    presidio_spacy_model: str = "es_core_news_md"
+    pseudonym_faker_locale: str = "es_ES"
+    pseudonym_hash_salt: str = "change-me-in-prod"
     estimator_api_url: str = "http://127.0.0.1:8000"
     estimator_api_timeout: float = 300.0
 

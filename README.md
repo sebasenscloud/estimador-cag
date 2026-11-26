@@ -677,6 +677,47 @@ uv run python -m scripts.demo_cleaning_s06
 
 6 archivos → 5 filas (el dedup se queda con la v2 de `BUDGET-2024-0005`) → **3 válidas, 1 en cuarentena, 1 descartada**. Se descarta `BUDGET-2024-0004` (−50000). Va a cuarentena `BUDGET-2024-0002`, y no el del «TBD»: pandas infiere el formato de fecha de la primera fila (ISO), la española `12/03/2024` no encaja → `NaT` → falla `not_nullable`. El «TBD» del 0003 pasa porque `client_name` admite nulos. La lección: la limpieza no pudo reparar esa fecha y la validación la cazó; por eso son dos pasos. Para repararla habría que parsear cada formato explícitamente (o `format="mixed"`); lo dejamos como en el curso para que la demo muestre la cuarentena.
 
+### Paso 2.5 · PII y GDPR
+
+**El control de acceso no basta: el vector no sabe qué es sensible.** Tres formas de filtrar datos a través de un RAG: **directa** («¿qué clientes nos contrataron migraciones?» → los nombres, literales en los chunks), **por agregación** (preguntas inocentes que juntas reconstruyen el mapa) y **por inferencia** (tras «[PERSON], CEO de [ORG]» quedan sector, fechas e importes: alcanza para identificar a alguien).
+
+GDPR mínimo: dato personal es lo que identifica a una persona, también por combinación; **seudonimizado sigue siendo dato personal** (hay un mapeo), anonimizado es irreversible; y minimización: el estimador necesita patrones, no nombres reales. **Seudonimizar, no tachar:** cambiar «Javier Romero» por `[PERSON]` rompe la semántica (el curso cita caídas de 15-25% en retrieval); cambiarlo por otro nombre verosímil, y siempre el mismo, la conserva. La protección va **antes** del embedding.
+
+**Piezas** (`app/ingestion/pii/`, basadas en el curso):
+
+| Pieza | Qué hace |
+|---|---|
+| `analyzer.py` | Presidio conectado a spaCy **en español** (`PRESIDIO_SPACY_MODEL`). Por defecto Presidio usa inglés y sobre nombres españoles devuelve cero personas sin avisar; el pre-flight lo verifica |
+| `recognizers.py` | Identificadores del dominio que Presidio no trae: `BUDGET-\d{4}-\d{4}` y `CLI-\d{4}`, con score 0,95 |
+| `pseudonymizer.py` | `ConsistentPseudonymizer`: HMAC-SHA256 del valor con un salt (`PSEUDONYM_HASH_SALT`), seudónimo con un generador **por tipo** (Faker `es_ES`: un nombre por un nombre, un email por un email) y reemplazo de derecha a izquierda para no desplazar posiciones |
+| `mapping_store.py` | `(tipo, hash) → seudónimo`. Guarda el **hash, nunca el valor**. En memoria (en el curso, Postgres); `MappingStore` es un `Protocol` |
+
+**Demo:**
+
+```bash
+uv run python -m scripts.demo_pii_s06
+```
+
+Sobre la transcripción de BetaNorte reemplaza 14 entidades: nombres, emails, el presupuesto, el código de cliente y la ciudad. «Javier Romero» aparece varias veces y siempre sale el mismo seudónimo.
+
+**Falsos positivos (el curso avisa que saldrán):** «Quería» y «Diego Marín: Sí» se detectan como personas; el segundo, además, se come la etiqueta del hablante. Es el precio del NER en español. Remedios del curso: subir el umbral, una lista de exclusión o el modelo `es_core_news_lg`. Otro natural en nuestro pipeline: seudonimizar los Documents del paso 2.3 (un turno por Document, con el hablante en los metadatos) en lugar del texto crudo.
+
+**Derecho al olvido (GDPR art. 17), en cinco pasos:** 1) buscar en el almacén los seudónimos de la persona; 2) localizar en el índice los chunks que los contienen; 3) borrarlos del índice vectorial; 4) borrar sus mapeos (si reaparece, recibe un seudónimo nuevo); 5) dejarlo en un registro de auditoría. Hoy están el 1 y el 4 (`pseudonymizer.forget(tipo, valor)`); el 2 y el 3 llegan con el índice de la Sesión 7. Rotar el salt invalida **todos** los mapeos a la vez.
+
+Diferencias con el curso: almacén en memoria (se pierde al reiniciar); si dos detecciones se solapan gana la de mayor score y después la más larga (en el curso `CLI-0078` terminaba reemplazado por un nombre; acá queda como código); los seudónimos de ids salen del Faker sembrado (demo reproducible); y `forget()` por valor.
+
+### Cierre: cinco piezas, el corpus ya es defendible
+
+| # | Pieza | Dónde vive |
+|---|---|---|
+| 1 | Decisión arquitectónica: RAG | `app/ingestion/architecture.py` |
+| 2 | Catálogo versionado, tres fuentes auditadas | `data/catalog/catalog.yaml` + `app/ingestion/catalog/` |
+| 3 | Ingesta con Document canónico y endpoint asíncrono | `loaders/`, `parsers/`, `orchestrator.py`, `routers/ingestion.py` |
+| 4 | Limpieza, Pandera y reparar / cuarentena / descartar | `app/ingestion/cleaning/` |
+| 5 | Seudonimización y tabla de mapeo | `app/ingestion/pii/` |
+
+La exclusión del Excel, la cuarentena, la regla del dedup y el modelo en español tienen su motivo, y está escrito en el repo: eso es data-driven AI. La madurez documental marca el techo de precisión: un RAG directo sobre los documentos tal cual ronda el 60%; catálogo, Document común, limpieza, validación y PII lo llevan hacia el 80%. **Sesión 7:** chunking, embeddings y espacio vectorial (pgvector).
+
 ## Estructura
 
 ```
@@ -764,6 +805,11 @@ Las API keys se leen siempre desde `.env`. Nunca están escritas en el código, 
 | `BOSS_MAX_ITERATIONS` | Rondas máximas del ACB (cada una = actor + crítico) | `3` |
 | `MODERATION_ENABLED` | Capa de moderación del guardrail de entrada (necesita `OPENAI_API_KEY`) | `true` |
 | `MODERATION_MODEL` | Modelo de moderación de OpenAI | `omni-moderation-latest` |
+| `CATALOG_PATH` | Catálogo de fuentes de la ingesta | `data/catalog/catalog.yaml` |
+| `INGESTION_DATA_ROOT` | Raíz de los datos que resuelve el loader | `data/seed` |
+| `PRESIDIO_SPACY_MODEL` | Modelo de spaCy que usa Presidio (en español) | `es_core_news_md` |
+| `PSEUDONYM_FAKER_LOCALE` | Locale de los seudónimos | `es_ES` |
+| `PSEUDONYM_HASH_SALT` | Salt del HMAC de los mapeos; rotarlo invalida todos | `change-me-in-prod` |
 | `TIER_TECHNICAL_TERMS` | Términos técnicos distintos para resolver `developer` | `2` |
 | `TIER_SMALL_TEAM_SIZE` | Equipo máximo para resolver `pm` | `2` |
 | `ESTIMATOR_API_URL` | Dirección del servicio IA que usa el cliente | `http://127.0.0.1:8000` |
