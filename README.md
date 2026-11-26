@@ -515,6 +515,26 @@ uv run python -m evals.run --mode actor --limit 8
 
 Sigue al runner del curso con dos diferencias: un rechazo del guardrail de entrada en un caso que espera fuera de scope se puntúa como respuesta `Out of scope:` con nuestro contrato (en el curso, costo 0 / 1 semana), y el tier se registra pero no cuenta para pasar o fallar.
 
+## Stress test del CAG (Sesión 6, ejercicio)
+
+Mide con números dónde se rompe el CAG: ventana de contexto, costo, latencia o *lost in the middle*. Esos números justifican el paso a RAG del módulo 3.
+
+**Telemetría por turno.** Cada respuesta de `POST /sessions/{id}/estimate` (y `estimate-acb`) trae `observation` (`TurnObservation`): turno, caracteres del mensaje y de los adjuntos, mensajes en la ventana, anclas, largo del resumen, tokens, latencia, costo, cantidad de llamadas y tier. El log `turn_observed` registra lo mismo. `tokens_in`, `tokens_out` y `latency_ms` son de la llamada de estimación (la que recibe todo el contexto); `cost_usd` suma todas las llamadas del turno. `GET /sessions/{id}` devuelve además el texto del resumen.
+
+**Escenarios** (`evals/stress/scenarios.py`, del curso): tres conversaciones de 20 turnos en una misma sesión.
+
+| Escenario | Qué estresa |
+|---|---|
+| `growing` | Los requisitos crecen; ¿el nombre del turno 1 sobrevive a la ventana? |
+| `pivot` | En el turno 5 el stack pasa de React a Flutter; ¿la metadata pierde React? |
+| `contradiction` | Turno 3: presupuesto 30k; turno 8: 80k. ¿Qué versión queda? |
+
+**Métricas** (`evals/stress/metrics.py`, deterministas): `latency_budget` (latencia del turno contra un SLA, 8000 ms), `cost_budget` (costo del turno contra USD 0,02) y `memory_drift` (¿el dato del turno 1 sigue en el snapshot de la sesión? Búsqueda de texto acotada a un campo; el log de cambios de la metadata no cuenta, porque guarda valores que ya no llegan al prompt).
+
+**Adjuntos de prueba.** `evals/stress/fixtures/build_pdfs.py` (con `fpdf2`, dependencia de desarrollo) genera PDFs de 5, 20, 50 y 100 KB de texto. Con nuestro tope de 20.000 caracteres por adjunto, los de 50 y 100 KB llegan truncados al largo del de 20 KB.
+
+**Runner** (`evals/stress/run.py`): escenarios × tamaños × repeticiones, una fila de CSV por turno (`evals/stress/results.csv`, no se commitea) y un resumen con P50/P95, costo y % de drift. **Llama al LLM real**: `--max-total-usd` (por defecto 5) corta la corrida si el gasto acumulado lo supera. Con el CSV se completa `evals/stress/REPORT.md`, que tiene los comandos para cada tamaño de corrida.
+
 ## Estructura
 
 ```

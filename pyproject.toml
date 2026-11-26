@@ -27,6 +27,7 @@ package = false
 
 [dependency-groups]
 dev = [
+    "fpdf2>=2.7",
     "pytest>=9.1.1",
     "ruff>=0.17.1",
 ]

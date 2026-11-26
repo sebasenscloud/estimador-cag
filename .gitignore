@@ -3,3 +3,7 @@ __pycache__/
 .env
 .DS_Store
 .vscode/
+
+# Stress test: PDFs generados y resultados de cada corrida
+evals/stress/fixtures/*.pdf
+evals/stress/results*.csv

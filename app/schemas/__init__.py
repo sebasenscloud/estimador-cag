@@ -15,6 +15,7 @@ from app.schemas.estimation import (
     ProjectType,
     SessionDebugInfo,
     SessionEstimationResponse,
+    TurnObservation,
 )
 from app.schemas.llm import LLMCallMetrics
 
@@ -36,4 +37,5 @@ __all__ = [
     "ProjectType",
     "SessionDebugInfo",
     "SessionEstimationResponse",
+    "TurnObservation",
 ]

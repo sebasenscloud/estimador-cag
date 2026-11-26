@@ -121,6 +121,35 @@ class AttachmentInfo(BaseModel):
     warning: str | None = None
 
 
+class TurnObservation(BaseModel):
+    """Telemetría de un turno de sesión (stress test de la Sesión 6).
+
+    Viaja en la respuesta para que el runner la lea del JSON, sin parsear logs.
+    Cuenta "cuánto contexto se tragó el modelo" y qué quedó en la memoria.
+
+    - tokens_in / tokens_out / latency_ms: de las llamadas de estimación del
+      turno (en ACB, la suma de las rondas del actor). Es el mejor proxy del
+      tamaño del contexto: system + historial + turno + texto de adjuntos.
+    - cost_usd: TODAS las llamadas del turno (estimación, metadata, resumen,
+      crítico...): lo que cuesta el turno de verdad. None si algún modelo no
+      tiene precio conocido.
+    """
+
+    turn_index: int = Field(ge=1)
+    session_id: str
+    enriched_transcript_chars: int = Field(ge=0)
+    attachments_total_chars: int = Field(ge=0)
+    messages_in_window: int = Field(ge=0)
+    anchors_count: int = Field(ge=0)
+    summary_chars: int = Field(ge=0)
+    tokens_in: int = Field(ge=0)
+    tokens_out: int = Field(ge=0)
+    cost_usd: float | None = None
+    latency_ms: int = Field(ge=0)
+    llm_calls: int = Field(ge=0)
+    last_resolved_tier: str | None = None
+
+
 class SessionEstimationResponse(BaseModel):
     session_id: str
     history_turns: int
@@ -141,6 +170,7 @@ class SessionEstimationResponse(BaseModel):
     tier_rule: str = "default"
     # Solo en /estimate-acb: rondas del crítico y decisión final del Boss.
     acb: BossTrace | None = None
+    observation: TurnObservation | None = None
 
 
 class SessionDebugInfo(BaseModel):
@@ -154,6 +184,8 @@ class SessionDebugInfo(BaseModel):
     message_count: int  # mensajes user/assistant que viajan al LLM (sin el system)
     anchors_count: int
     summary_chars: int
+    # Texto del resumen acumulado: lo usa MemoryDriftMetric del stress test.
+    summary: str = ""
     last_resolved_tier: str | None
     last_tier_rule: str | None
     project_metadata: ProjectMetadata

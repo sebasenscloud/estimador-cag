@@ -37,6 +37,7 @@ from app.schemas import (
     EstimationResult,
     SessionDebugInfo,
     SessionEstimationResponse,
+    TurnObservation,
 )
 from app.schemas.critic import CriticFeedback
 from app.services import boss
@@ -184,6 +185,24 @@ def _run_turn(
         sources=["mensaje del usuario", *(item.filename for item in processed)],
     )
 
+    estimation_calls = [call for call in llm_calls if call.purpose == "estimation"]
+    observation = TurnObservation(
+        turn_index=session.total_turns,
+        session_id=session.session_id,
+        enriched_transcript_chars=len(_guardrail_text(request.description, processed)),
+        attachments_total_chars=sum(item.extracted_chars for item in processed),
+        messages_in_window=len(session.history),
+        anchors_count=session.history.anchor_count,
+        summary_chars=len(session.history.summary),
+        tokens_in=sum(call.tokens_in or 0 for call in estimation_calls),
+        tokens_out=sum(call.tokens_out or 0 for call in estimation_calls),
+        cost_usd=_total_cost(llm_calls),
+        latency_ms=sum(call.latency_ms for call in estimation_calls),
+        llm_calls=len(llm_calls),
+        last_resolved_tier=session.last_resolved_tier,
+    )
+    logger.info("turn_observed", **observation.model_dump())
+
     logger.info(
         "session_estimation_completed",
         session_id=session.session_id,
@@ -207,6 +226,7 @@ def _run_turn(
         tier=tier.tier,
         tier_rule=tier.rule,
         acb=trace,
+        observation=observation,
     )
 
 
@@ -243,6 +263,7 @@ def get_debug_info(session_id: str) -> SessionDebugInfo:
         message_count=len(session.history),
         anchors_count=session.history.anchor_count,
         summary_chars=len(session.history.summary),
+        summary=session.history.summary,
         last_resolved_tier=session.last_resolved_tier,
         last_tier_rule=session.last_tier_rule,
         project_metadata=session.metadata,
