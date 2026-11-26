@@ -563,6 +563,30 @@ Las piezas que todavía no existen salen como ⏳ pendientes, con el paso que la
 
 Diferencias con el curso: no instalamos `unstructured` (cientos de MB; los PDFs ya los resuelven pypdf y PyMuPDF) ni Postgres (la tabla de seudónimos vive en memoria por ahora); el health check es `GET /`.
 
+### Paso 2.1 · ¿CAG, RAG o híbrido?
+
+```bash
+uv run python -m app.ingestion.architecture                       # con nuestro modelo
+uv run python -m app.ingestion.architecture --model gpt-4o-mini   # con el del curso
+```
+
+`app/ingestion/architecture.py` (portado del curso) convierte la decisión en código que se ejecuta. No forma parte de la API: es un análisis que se corre **antes** de ingerir nada.
+
+**Las cuatro restricciones del CAG son un AND** (`CAGViability.viable` es un `all([...])`): con una sola en rojo, el CAG no es viable.
+
+| Restricción | Cuándo está en verde |
+|---|---|
+| Ventana de contexto | El corpus entra en el 70% de la ventana (el resto es para system, historial y respuesta) |
+| Costo | El modelo tiene caché de prefijo y el corpus cambia como mucho una vez por semana |
+| Latencia | El corpus tiene 100.000 tokens o menos |
+| Lost in the middle | Ídem: por encima, el modelo atiende peor lo que queda en el centro |
+
+**Los cuatro ejes de la recomendación** (`recommend_architecture`): volumen (¿cabe?), frecuencia de refresco (¿es estable?), trazabilidad (¿hay que citar la fuente?) y control de acceso (¿hay que filtrar por usuario?). Si se cumplen los cuatro → `CAG`. Si cabe y es estable pero hay que citar o filtrar → `Hybrid` (lo estable por CAG, lo volátil o sensible por RAG). Si no → `RAG`.
+
+**Resultado para el Proyecto 2 del curso** (250.000 tokens, refresco semanal, trazabilidad y control de acceso obligatorios): **RAG**, con tres restricciones en rojo (ventana, latencia y lost in the middle). Pasa igual con los 200.000 tokens de Haiku 4.5: la ventana útil es de 140.000.
+
+El fine-tuning no está en el árbol: enseña *cómo* responder, no aporta datos ni trazabilidad. Diferencia con el curso: sumamos el perfil de nuestro modelo (`claude-haiku-4-5`) y el CLI elige el modelo con `--model`.
+
 ## Estructura
 
 ```
