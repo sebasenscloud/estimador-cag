@@ -587,6 +587,34 @@ uv run python -m app.ingestion.architecture --model gpt-4o-mini   # con el del c
 
 El fine-tuning no está en el árbol: enseña *cómo* responder, no aporta datos ni trazabilidad. Diferencia con el curso: sumamos el perfil de nuestro modelo (`claude-haiku-4-5`) y el CLI elige el modelo con `--model`.
 
+### Paso 2.2 · Catálogo de fuentes
+
+**Antipatrón: vectorizar primero, mirar después.** Los errores no salen el día 1, salen el día 60: versiones mezcladas (la propuesta inicial y la firmada conviven y se recupera la equivocada), fuentes podridas (tarifas viejas que dan respuestas seguras y falsas) y huecos donde el modelo inventa algo plausible. Las tres causas tienen la misma raíz: nadie miró lo que había. Por eso se empieza por el **inventario**.
+
+**Datos de ejemplo** (`data/seed/`, copiados del curso, con suciedad a propósito): 6 presupuestos JSON en `budgets/` (dos versiones del mismo, monedas `eur`/`EUR`, fechas en dos formatos, un monto negativo), 3 transcripciones en `transcripts/` (una de 2023 sin etiquetas de hablante) y el Excel de tarifas `rate_card_2024.xlsx`.
+
+**Inspeccionar: hechos antes que opiniones.**
+
+```bash
+uv run python -m app.ingestion.catalog.inspect data/seed
+```
+
+`inspect.py` cuenta archivos, tamaño, formatos y la última modificación de cada carpeta. No puntúa la calidad: el censo mide lo medible y la calidad la decide una persona. Limitación: la fecha de modificación es la del sistema de archivos y git no la conserva (un clon nuevo muestra la del checkout), así que es una pista y no una prueba; lo observado queda escrito en `refresh_observed`.
+
+**El catálogo es código, no documentación.** `data/catalog/catalog.yaml` se carga con `yaml.safe_load` y se valida con Pydantic (`app/ingestion/catalog/models.py`):
+
+```bash
+uv run python -m app.ingestion.catalog.loader data/catalog/catalog.yaml
+```
+
+| Fuente | Decisión | Motivo |
+|---|---|---|
+| `presupuestos_json` | **include** | Fuente principal; tiene PII, así que se seudonimiza (paso 2.5) |
+| `transcripciones_txt` | **review** | Un archivo de 2023 sin etiquetas de hablante rompe el parser por defecto |
+| `rate_card_xlsx` | **exclude** | `actuality=1`: tarifas de enero de 2024 |
+
+Reglas del contrato: tres decisiones (`review` es la tercera vía, para no colapsar todo a sí o no); si no es `include`, `decision_reason` es obligatorio; nombres en snake_case y únicos (son el identificador del endpoint de ingesta); `extra="forbid"`. La calidad tiene cuatro dimensiones de 1 a 5 (completitud, consistencia, actualidad, fiabilidad) que **no se promedian**: completitud 5 y fiabilidad 1 no es «calidad 3», son datos completos que pueden ser mentira. Excluir con el motivo escrito es disciplina, no desidia: el `git log` del YAML dice quién decidió qué y por qué.
+
 ## Estructura
 
 ```
